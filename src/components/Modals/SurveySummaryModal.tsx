@@ -19,7 +19,6 @@ import {
 } from 'lucide-react';
 import { exportToKML, exportToCSV, exportToPDF } from '../../utils/exportUtils';
 import { generateBASurveyPdf, BASurveyData } from '../../utils/baSurveyPdf';
-import { exportPDFGambar } from '../../utils/pdfGambarExport';
 import { buildRincianPekerjaan } from '../../utils/rincianPekerjaan';
 
 interface SurveySummaryModalProps {

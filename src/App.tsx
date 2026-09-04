@@ -933,6 +933,7 @@ export function App() {
       <Sidebar
         surveys={surveys}
         activeSurvey={activeSurvey}
+        onSelectSurvey={handleSelectSurvey}
         onNewSurvey={() => {
           setEditingSurvey(null);
           setShowBASurveyModal(true);
