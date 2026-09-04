@@ -40,7 +40,7 @@ export function normalizeGarduCode(str?: string): string {
   if (!str) return '';
   return str
     .toUpperCase()
-    .replace(/GARDU\s*/g, '')
+    .replace(/\b(GARDU|GD|TRAFO|TRF)\b\s*/g, '')
     .replace(/[^A-Z0-9]/g, '');
 }
 
@@ -71,11 +71,9 @@ export class TrafoLoadService {
         }
       }
 
-      // Fetch live CSV from GitHub Pages
+      // Fetch live CSV from GitHub Pages without custom headers to avoid CORS preflight rejection
       console.log('Fetching live Beban Trafo CSV from web...');
-      const response = await fetch(CSV_URL, {
-        headers: { 'Cache-Control': 'no-cache' },
-      });
+      const response = await fetch(CSV_URL);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: Failed to fetch ${CSV_URL}`);
@@ -87,8 +85,12 @@ export class TrafoLoadService {
       if (items.length > 0) {
         this.inMemoryCache = items;
         if (typeof window !== 'undefined') {
-          localStorage.setItem(CACHE_KEY, JSON.stringify(items));
-          localStorage.setItem(CACHE_TIME_KEY, Date.now().toString());
+          try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify(items));
+            localStorage.setItem(CACHE_TIME_KEY, Date.now().toString());
+          } catch (storageErr) {
+            console.warn('localStorage quota exceeded for trafo cache:', storageErr);
+          }
         }
         console.log(`Successfully parsed & cached ${items.length} Beban Trafo records`);
       }
@@ -113,6 +115,54 @@ export class TrafoLoadService {
 
       return [];
     }
+  }
+
+  /**
+   * Search Beban Trafo items with fuzzy / partial matching for autocomplete
+   */
+  searchBebanTrafo(query: string, allTrafoData: BebanTrafoItem[], limit = 12): BebanTrafoItem[] {
+    if (!query || !query.trim() || !allTrafoData || allTrafoData.length === 0) {
+      return [];
+    }
+
+    const cleanQuery = query.trim().toUpperCase();
+    const normQuery = normalizeGarduCode(cleanQuery);
+
+    const exactMatches: BebanTrafoItem[] = [];
+    const prefixMatches: BebanTrafoItem[] = [];
+    const containsMatches: BebanTrafoItem[] = [];
+    const feederMatches: BebanTrafoItem[] = [];
+
+    const seenCodes = new Set<string>();
+
+    for (const item of allTrafoData) {
+      const code = item.gardu.toUpperCase();
+      const normCode = normalizeGarduCode(code);
+      const feeder = (item.penyulang || '').toUpperCase();
+      const unit = (item.unitLayanan || '').toUpperCase();
+
+      if (seenCodes.has(normCode)) continue;
+
+      if (normCode === normQuery || code === cleanQuery) {
+        exactMatches.push(item);
+        seenCodes.add(normCode);
+      } else if (normCode.startsWith(normQuery) || code.startsWith(cleanQuery)) {
+        prefixMatches.push(item);
+        seenCodes.add(normCode);
+      } else if (normCode.includes(normQuery) || code.includes(cleanQuery)) {
+        containsMatches.push(item);
+        seenCodes.add(normCode);
+      } else if (feeder.includes(cleanQuery) || unit.includes(cleanQuery)) {
+        feederMatches.push(item);
+        seenCodes.add(normCode);
+      }
+
+      if (exactMatches.length + prefixMatches.length + containsMatches.length >= limit * 2) {
+        break;
+      }
+    }
+
+    return [...exactMatches, ...prefixMatches, ...containsMatches, ...feederMatches].slice(0, limit);
   }
 
   /**

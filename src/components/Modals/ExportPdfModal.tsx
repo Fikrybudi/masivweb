@@ -21,7 +21,7 @@ import {
   calculateBoundsForGroup,
   SegmentMode
 } from '../../utils/geoUtils';
-import { trafoLoadService } from '../../services/trafoLoadService';
+import { trafoLoadService, normalizeGarduCode } from '../../services/trafoLoadService';
 
 interface ExportPdfModalProps {
   visible: boolean;
@@ -59,10 +59,70 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
   const [pdfRincianPosition, setPdfRincianPosition] = useState<'first' | 'all'>('first');
   const [selectedSegmentMode, setSelectedSegmentMode] = useState<SegmentMode | 'single'>('scale');
 
+  // Live Beban Trafo Autocomplete State
+  const [allTrafoList, setAllTrafoList] = useState<BebanTrafoItem[]>([]);
+  const [trafoSuggestions, setTrafoSuggestions] = useState<BebanTrafoItem[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [activeBebanItem, setActiveBebanItem] = useState<BebanTrafoItem | null>(null);
+  const [isLoadingTrafo, setIsLoadingTrafo] = useState(false);
+
   // Loading & Progress
   const [isExporting, setIsExporting] = useState(false);
   const [progressText, setProgressText] = useState<string | null>(null);
   const [progressPercent, setProgressPercent] = useState<number>(0);
+
+  // Fetch live trafo data when modal becomes visible
+  useEffect(() => {
+    if (visible) {
+      setIsLoadingTrafo(true);
+      trafoLoadService.fetchBebanTrafoData().then((data) => {
+        setAllTrafoList(data);
+        setIsLoadingTrafo(false);
+
+        // Auto-match if survey has gardu
+        if (survey.garduList && survey.garduList.length > 0) {
+          for (const g of survey.garduList) {
+            const match = trafoLoadService.findBebanTrafoForGardu(g, data);
+            if (match) {
+              setActiveBebanItem(match);
+              if (!pdfCustomGarduSearch) {
+                setPdfCustomGarduSearch(match.gardu);
+              }
+              break;
+            }
+          }
+        }
+      }).catch(err => {
+        console.warn('Failed to load trafo data:', err);
+        setIsLoadingTrafo(false);
+      });
+    }
+  }, [visible, survey]);
+
+  // Update suggestions & active match when search text changes
+  useEffect(() => {
+    if (!pdfCustomGarduSearch.trim()) {
+      setTrafoSuggestions([]);
+      setActiveBebanItem(null);
+      return;
+    }
+
+    if (allTrafoList.length > 0) {
+      const results = trafoLoadService.searchBebanTrafo(pdfCustomGarduSearch, allTrafoList, 8);
+      setTrafoSuggestions(results);
+
+      const exactMatch = allTrafoList.find(t =>
+        normalizeGarduCode(t.gardu) === normalizeGarduCode(pdfCustomGarduSearch)
+      );
+      if (exactMatch) {
+        setActiveBebanItem(exactMatch);
+      } else if (results.length > 0) {
+        setActiveBebanItem(results[0]);
+      } else {
+        setActiveBebanItem(null);
+      }
+    }
+  }, [pdfCustomGarduSearch, allTrafoList]);
 
   // Load saved config on mount or open
   useEffect(() => {
@@ -105,10 +165,37 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
             element.classList.contains('leaflet-top') ||
             element.classList.contains('leaflet-bottom') ||
             element.classList.contains('map-control-btn') ||
+            element.classList.contains('map-type-floating-btn') ||
+            element.classList.contains('gis-legend') ||
             element.classList.contains('tiang-target-cursor') ||
             element.classList.contains('gardu-target-cursor') ||
             element.classList.contains('jalur-target-cursor')
           );
+        },
+        onclone: (clonedDoc) => {
+          // Neutralize Leaflet translate3d transform on .leaflet-map-pane so html2canvas doesn't double-offset markers and canvas
+          const mapPane = clonedDoc.querySelector('.leaflet-map-pane') as HTMLElement;
+          if (mapPane) {
+            const transform = mapPane.style.transform || window.getComputedStyle(mapPane).transform;
+            if (transform && transform !== 'none') {
+              let x = 0;
+              let y = 0;
+              const translateMatch = transform.match(/translate3d\(([-0-9.]+)px,\s*([-0-9.]+)px/);
+              if (translateMatch) {
+                x = parseFloat(translateMatch[1]);
+                y = parseFloat(translateMatch[2]);
+              } else {
+                const matrixMatch = transform.match(/matrix\([^,]+,[^,]+,[^,]+,[^,]+,\s*([-0-9.]+),\s*([-0-9.]+)\)/);
+                if (matrixMatch) {
+                  x = parseFloat(matrixMatch[1]);
+                  y = parseFloat(matrixMatch[2]);
+                }
+              }
+              mapPane.style.transform = 'none';
+              mapPane.style.left = `${x}px`;
+              mapPane.style.top = `${y}px`;
+            }
+          }
         }
       });
       return canvas.toDataURL('image/jpeg', 0.95);
@@ -130,10 +217,10 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
       let bebanTrafoList: BebanTrafoItem[] = [];
 
       if (includeBebanTrafo) {
-        setProgressText('Menarik database Beban Trafo Web...');
+        setProgressText('Menyiapkan data Beban Trafo...');
         setProgressPercent(15);
         try {
-          const allBeban = await trafoLoadService.fetchBebanTrafoData();
+          const allBeban = allTrafoList.length > 0 ? allTrafoList : await trafoLoadService.fetchBebanTrafoData();
           if (survey.garduList && survey.garduList.length > 0) {
             for (const g of survey.garduList) {
               const match = trafoLoadService.findBebanTrafoForGardu(g, allBeban);
@@ -142,10 +229,19 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
           }
           if (pdfCustomGarduSearch.trim()) {
             const customMatches = trafoLoadService.findBebanTrafoBySearchText(pdfCustomGarduSearch.trim(), allBeban);
-            if (customMatches.length > 0) bebanTrafoList = customMatches;
+            if (customMatches.length > 0) {
+              bebanTrafoList = customMatches;
+            } else if (activeBebanItem) {
+              bebanTrafoList = [activeBebanItem];
+            }
+          } else if (activeBebanItem) {
+            bebanTrafoList = [activeBebanItem];
           }
         } catch (e) {
           console.warn('Could not fetch Beban Trafo:', e);
+          if (activeBebanItem) {
+            bebanTrafoList = [activeBebanItem];
+          }
         }
       }
 
@@ -199,20 +295,29 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
 
       // 4. Single-page mode or no tiangs to segment
       if (selectedSegmentMode === 'single' || tiangList.length <= 1) {
-        setProgressText('Mengambil gambar peta resolusi tinggi...');
-        setProgressPercent(45);
+        setProgressText('Memuat dan menstabilkan tile peta satelit/jalan...');
+        setProgressPercent(40);
 
-        // If leafletMap available and we have tiangs, fit bounds to entire survey
-        if (leafletMap && tiangList.length > 0) {
-          const lats = tiangList.map(t => t.koordinat.latitude);
-          const lngs = tiangList.map(t => t.koordinat.longitude);
+        // Collect all survey coordinates (tiang, gardu, jalur) to fit complete bounds
+        const allCoords: { latitude: number; longitude: number }[] = [];
+        (survey.tiangList || []).forEach(t => t?.koordinat && allCoords.push(t.koordinat));
+        (survey.garduList || []).forEach(g => g?.koordinat && allCoords.push(g.koordinat));
+        (survey.jalurList || []).forEach(j => (j?.koordinat || []).forEach(c => allCoords.push(c)));
+
+        if (leafletMap && allCoords.length > 0) {
+          const lats = allCoords.map(c => c.latitude);
+          const lngs = allCoords.map(c => c.longitude);
           const bounds = L.latLngBounds(
             L.latLng(Math.min(...lats), Math.min(...lngs)),
             L.latLng(Math.max(...lats), Math.max(...lngs))
           );
-          leafletMap.fitBounds(bounds, { padding: [30, 30], animate: false });
-          await new Promise(r => setTimeout(r, 450));
+          leafletMap.fitBounds(bounds, { padding: [40, 40], animate: false });
+          // Generous wait for all satellite / road tiles to finish loading over network
+          await new Promise(r => setTimeout(r, 1500));
         }
+
+        setProgressText('Mengambil gambar peta resolusi tinggi (2x CAD)...');
+        setProgressPercent(60);
 
         const mapBase64 = await captureMapSnapshot(mapEl);
         if (!mapBase64) {
@@ -222,7 +327,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
         }
 
         setProgressText('Menyusun PDF Kop Resmi PLN (Standar CAD)...');
-        setProgressPercent(75);
+        setProgressPercent(80);
 
         const pdfBytes = await generatePdfWithMap(mapBase64, fullSurveyInfo);
         if (!pdfBytes) {
@@ -269,9 +374,9 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
             L.latLng(bounds[0][0], bounds[0][1]),
             L.latLng(bounds[1][0], bounds[1][1])
           );
-          leafletMap.fitBounds(latLngBounds, { padding: [25, 25], animate: false });
-          // Wait for tiles to settle
-          await new Promise(r => setTimeout(r, 450));
+          leafletMap.fitBounds(latLngBounds, { padding: [30, 30], animate: false });
+          // Wait for tiles to settle on segment jump
+          await new Promise(r => setTimeout(r, 1200));
         }
 
         const base64 = await captureMapSnapshot(mapEl);
@@ -620,45 +725,145 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
             </div>
 
             {includeBebanTrafo && (
-              <div style={{ marginTop: '10px' }}>
-                <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#93c5fd', marginBottom: '4px' }}>
-                  Pilih / Ketik Nama Gardu (Contoh: STG / STG240 / LBAN008):
-                </label>
-                <input
-                  type="text"
-                  value={pdfCustomGarduSearch}
-                  onChange={(e) => setPdfCustomGarduSearch(e.target.value)}
-                  placeholder="Ketik nama/kode gardu (misal: STG240)"
-                  style={{
-                    width: '100%',
-                    boxSizing: 'border-box',
-                    background: '#0f172a',
-                    border: '1px solid #3b82f6',
-                    borderRadius: '6px',
-                    color: '#f8fafc',
-                    padding: '6px 10px',
-                    fontSize: '11px',
-                    outline: 'none'
-                  }}
-                />
+              <div style={{ marginTop: '10px', position: 'relative' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: 600, color: '#93c5fd' }}>
+                    Cari / Pilih Gardu Database Web (2.151 Gardu):
+                  </label>
+                  {isLoadingTrafo && (
+                    <span style={{ fontSize: '10px', color: '#60a5fa' }}>⏳ Memuat database...</span>
+                  )}
+                  {!isLoadingTrafo && allTrafoList.length > 0 && (
+                    <span style={{ fontSize: '10px', color: '#34d399' }}>✓ {allTrafoList.length} gardu siap</span>
+                  )}
+                </div>
+
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    value={pdfCustomGarduSearch}
+                    onChange={(e) => {
+                      setPdfCustomGarduSearch(e.target.value);
+                      setShowSuggestions(true);
+                    }}
+                    onFocus={() => setShowSuggestions(true)}
+                    placeholder="Ketik nama/kode gardu (contoh: MDCA240, RKG240, LBAN008)"
+                    style={{
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      background: '#0f172a',
+                      border: activeBebanItem ? '1.5px solid #10b981' : '1px solid #3b82f6',
+                      borderRadius: '6px',
+                      color: '#f8fafc',
+                      padding: '8px 12px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      outline: 'none'
+                    }}
+                  />
+                  {pdfCustomGarduSearch && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPdfCustomGarduSearch('');
+                        setActiveBebanItem(null);
+                        setShowSuggestions(false);
+                      }}
+                      style={{
+                        position: 'absolute',
+                        right: '8px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'none',
+                        border: 'none',
+                        color: '#94a3b8',
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Floating Autocomplete Suggestions Dropdown */}
+                {showSuggestions && trafoSuggestions.length > 0 && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      maxHeight: '180px',
+                      overflowY: 'auto',
+                      background: '#0f172a',
+                      border: '1px solid #3b82f6',
+                      borderRadius: '6px',
+                      marginTop: '4px',
+                      zIndex: 9999,
+                      boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.7)'
+                    }}
+                  >
+                    {trafoSuggestions.map((item) => (
+                      <div
+                        key={item.gardu}
+                        onClick={() => {
+                          setPdfCustomGarduSearch(item.gardu);
+                          setActiveBebanItem(item);
+                          setShowSuggestions(false);
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          borderBottom: '1px solid #1e293b',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          fontSize: '11px',
+                          color: '#f8fafc'
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#1e3a8a')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = '#0f172a')}
+                      >
+                        <div>
+                          <b style={{ color: '#60a5fa' }}>{item.gardu}</b> - {item.kapasitasKVA} kVA
+                          <div style={{ fontSize: '10px', color: '#94a3b8' }}>
+                            Penyulang: {item.penyulang} | {item.unitLayanan}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <span
+                            style={{
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontSize: '10px',
+                              fontWeight: 700,
+                              background: item.statusBeban === 'Overload' ? '#dc2626' : item.statusBeban === 'Underload' ? '#d97706' : '#16a34a',
+                              color: '#ffffff'
+                            }}
+                          >
+                            {item.persenDayaTrafo}%
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Quick selection pills from survey gardus */}
                 {survey.garduList && survey.garduList.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px', alignItems: 'center' }}>
-                    <span style={{ fontSize: '10px', color: '#94a3b8' }}>Pilih dari Gardu Survey:</span>
+                    <span style={{ fontSize: '10px', color: '#94a3b8' }}>Gardu Survey:</span>
                     {survey.garduList.map((g) => {
                       const label = g.namaGardu || g.nomorGardu;
-                      const isSelected = pdfCustomGarduSearch.includes(label);
+                      const isSelected = pdfCustomGarduSearch.includes(label) || activeBebanItem?.gardu === label;
                       return (
                         <button
                           key={g.id}
                           type="button"
                           onClick={() => {
-                            setPdfCustomGarduSearch(prev => {
-                              if (!prev) return label;
-                              if (prev.includes(label)) return prev;
-                              return `${prev}, ${label}`;
-                            });
+                            setPdfCustomGarduSearch(label);
+                            setShowSuggestions(true);
                           }}
                           style={{
                             background: isSelected ? '#2563eb' : '#334155',
@@ -675,6 +880,46 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
                         </button>
                       );
                     })}
+                  </div>
+                )}
+
+                {/* Visual Preview Card when Gardu is selected */}
+                {activeBebanItem ? (
+                  <div style={{
+                    marginTop: '8px',
+                    padding: '8px 12px',
+                    background: 'rgba(16, 185, 129, 0.12)',
+                    border: '1px solid #10b981',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '2px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#34d399' }}>
+                        ✓ Data Siap Dimuat: Gardu {activeBebanItem.gardu} ({activeBebanItem.kapasitasKVA} kVA)
+                      </span>
+                      <span style={{
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        padding: '1px 6px',
+                        borderRadius: '4px',
+                        background: activeBebanItem.statusBeban === 'Overload' ? '#dc2626' : '#059669',
+                        color: '#ffffff'
+                      }}>
+                        {activeBebanItem.persenDayaTrafo}% ({activeBebanItem.statusBeban})
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#cbd5e1' }}>
+                      Arus: R=<b>{activeBebanItem.bebanR}A</b>, S=<b>{activeBebanItem.bebanS}A</b>, T=<b>{activeBebanItem.bebanT}A</b> | Unbalance: {activeBebanItem.unbalancePercent}%
+                    </div>
+                    <div style={{ fontSize: '9.5px', color: '#94a3b8' }}>
+                      Penyulang: {activeBebanItem.penyulang} | Waktu Ukur: {activeBebanItem.tanggalUkur || '-'} {activeBebanItem.waktuUkur || ''}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: '6px', fontSize: '10px', color: '#94a3b8' }}>
+                    💡 Ketik nama atau kode gardu di atas untuk memilih data beban yang akan dicantumkan pada PDF.
                   </div>
                 )}
               </div>
