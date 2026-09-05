@@ -441,6 +441,77 @@ export function App() {
     }
   };
 
+  // Move Tiang & Snap All Connected Jalurs (Identical to MASIV Mobile)
+  const handleMoveTiang = async (tiangId: string, newCoord: Coordinate) => {
+    if (!activeSurvey) return;
+
+    const targetTiang = (activeSurvey.tiangList || []).find((t) => t.id === tiangId);
+    const oldCoord = targetTiang?.koordinat;
+
+    // 1. Update Tiang Coordinate
+    const updatedTiangList = (activeSurvey.tiangList || []).map((t) =>
+      t.id === tiangId ? { ...t, koordinat: newCoord, updatedAt: new Date(), isSynced: false } : t
+    );
+
+    // 2. Find and update connected Jalurs (snapped to new position)
+    const updatedJalurList = (activeSurvey.jalurList || []).map((jalur) => {
+      let hasMatch = false;
+      const newKoordinat = [...(jalur.koordinat || [])];
+
+      // A. Match by tiangIds
+      if (jalur.tiangIds && jalur.tiangIds.includes(tiangId)) {
+        jalur.tiangIds.forEach((id, idx) => {
+          if (id === tiangId && idx < newKoordinat.length) {
+            newKoordinat[idx] = newCoord;
+            hasMatch = true;
+          }
+        });
+      }
+
+      // B. Fallback match by old coordinates proximity (within 2.5 meters)
+      if (!hasMatch && oldCoord && newKoordinat.length > 0) {
+        newKoordinat.forEach((c, idx) => {
+          const dist = calculateDistance(c, oldCoord);
+          if (dist <= 2.5) {
+            newKoordinat[idx] = newCoord;
+            hasMatch = true;
+          }
+        });
+      }
+
+      if (!hasMatch) return jalur;
+
+      // Recalculate total length along the new polyline
+      let newPanjang = 0;
+      for (let i = 0; i < newKoordinat.length - 1; i++) {
+        newPanjang += calculateDistance(newKoordinat[i], newKoordinat[i + 1]);
+      }
+
+      return {
+        ...jalur,
+        koordinat: newKoordinat,
+        panjangMeter: Math.round(newPanjang * 10) / 10,
+        updatedAt: new Date(),
+        isSynced: false,
+      };
+    });
+
+    const updatedSurvey: Survey = {
+      ...activeSurvey,
+      tiangList: updatedTiangList,
+      jalurList: updatedJalurList,
+      isSynced: false,
+      updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
+    };
+
+    await localDb.saveSurvey(updatedSurvey);
+    setActiveSurvey(updatedSurvey);
+    setSurveys(await localDb.getAllSurveys());
+    setMovingTiang(null);
+    setToolMode('none');
+  };
+
   // Map Click Handler
   const handleMapClick = async (coord: Coordinate) => {
     if (!activeSurvey) {
@@ -448,23 +519,9 @@ export function App() {
       return;
     }
 
-    // Move Tiang Handler
+    // Move Tiang Handler (Click on map to place)
     if (toolMode === 'move-tiang' && movingTiang) {
-      const updatedTiangList = (activeSurvey.tiangList || []).map((t) =>
-        t.id === movingTiang.id ? { ...t, koordinat: coord, updatedAt: new Date() } : t
-      );
-      const updatedSurvey: Survey = {
-        ...activeSurvey,
-        tiangList: updatedTiangList,
-        isSynced: false,
-        updatedAt: new Date(),
-        updatedBy: session?.user?.email || activeSurvey.updatedBy,
-      };
-      await localDb.saveSurvey(updatedSurvey);
-      setActiveSurvey(updatedSurvey);
-      setSurveys(await localDb.getAllSurveys());
-      setMovingTiang(null);
-      setToolMode('none');
+      await handleMoveTiang(movingTiang.id, coord);
       return;
     }
 
@@ -1268,6 +1325,8 @@ export function App() {
               onSelectAsset={handleSelectAsset}
               onTiangClick={handleTiangClick}
               onTiangLabelShift={handleTiangLabelShift}
+              movingTiang={movingTiang}
+              onTiangMove={handleMoveTiang}
               mapType={mapType}
               onToggleMapType={() => setMapType((prev) => {
                 const cycle: Array<'osm' | 'satellite' | 'google-sat' | 'google-hybrid'> = ['osm', 'satellite', 'google-sat', 'google-hybrid'];

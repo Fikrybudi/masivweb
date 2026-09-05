@@ -55,6 +55,8 @@ interface SurveyMapProps {
   onSelectAsset?: (asset: any, type: 'tiang' | 'gardu' | 'jalur') => void;
   onTiangClick?: (tiang: Tiang) => void;
   onTiangLabelShift?: (tiangId: string, newPosition: number, newDistance?: number) => void;
+  movingTiang?: Tiang | null;
+  onTiangMove?: (tiangId: string, newCoord: Coordinate) => void;
   mapType?: 'osm' | 'satellite' | 'google-sat' | 'google-hybrid';
   onToggleMapType?: () => void;
   mode?: string;
@@ -113,6 +115,8 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
   onSelectAsset,
   onTiangClick,
   onTiangLabelShift,
+  movingTiang,
+  onTiangMove,
   mapType = 'osm',
   onToggleMapType,
   mode = 'none',
@@ -631,6 +635,39 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                       if (onTiangClick) onTiangClick(t);
                       else if (onSelectAsset) onSelectAsset(t, 'tiang');
                     }
+                  }}
+                />
+              )}
+
+              {/* Active Move-Tiang Draggable Handle (Snap Connected Lines) */}
+              {mode === 'move-tiang' && movingTiang?.id === t.id && (
+                <Marker
+                  position={[t.koordinat.latitude, t.koordinat.longitude]}
+                  draggable={true}
+                  zIndexOffset={3000}
+                  icon={new L.DivIcon({
+                    className: 'custom-moving-tiang-pin',
+                    html: `
+                      <div style="position:relative;display:flex;align-items:center;justify-content:center;cursor:grab;">
+                        <div style="position:absolute;width:38px;height:38px;border-radius:50%;background:rgba(234,179,8,0.35);box-shadow:0 0 16px rgba(234,179,8,0.7);animation:pulseScale 1.2s infinite ease-in-out;"></div>
+                        <div style="width:20px;height:20px;border-radius:50%;background:#eab308;border:2.5px solid #ffffff;box-shadow:0 0 12px #eab308;display:flex;align-items:center;justify-content:center;color:#0f172a;font-weight:900;font-size:11px;">
+                          📍
+                        </div>
+                      </div>
+                    `,
+                    iconSize: [38, 38],
+                    iconAnchor: [19, 19],
+                  })}
+                  eventHandlers={{
+                    dragend: (e) => {
+                      const latlng = e.target.getLatLng();
+                      if (onTiangMove) {
+                        onTiangMove(t.id, {
+                          latitude: latlng.lat,
+                          longitude: latlng.lng,
+                        });
+                      }
+                    },
                   }}
                 />
               )}

@@ -235,7 +235,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       }}>
         <div>
           <div style={{ fontWeight: 700, fontSize: '13px' }}>📍 Geser Posisi Tiang</div>
-          <div style={{ fontSize: '11px', opacity: 0.9 }}>Klik pada titik baru di peta tempat tiang dipindahkan</div>
+          <div style={{ fontSize: '11px', opacity: 0.9 }}>Geser pin tiang atau klik titik baru di peta (jalur kabel otomatis snapped mengikuti)</div>
         </div>
         <button
           onClick={onCancelDrawing}
