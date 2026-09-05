@@ -549,7 +549,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
                       {/* Cloud Sync Status Badge */}
                       <span
-                        title={isCloud ? 'Data tersinkronisasi di database cloud Supabase' : 'Data tersimpan di memori browser lokal'}
+                        title={isCloud ? 'Data tersinkronisasi di database cloud Supabase' : 'Ada revisi atau data lokal yang belum di-upload ke Cloud Supabase'}
                         style={{
                           fontSize: '10px',
                           fontWeight: 700,
@@ -558,12 +558,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: '3px',
-                          background: isCloud ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                          background: isCloud ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.18)',
                           color: isCloud ? '#34d399' : '#fbbf24',
-                          border: isCloud ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(245, 158, 11, 0.35)',
+                          border: isCloud ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(245, 158, 11, 0.45)',
                         }}
                       >
-                        {isCloud ? '☁️ Cloud' : '📱 Lokal'}
+                        {isCloud ? '☁️ Cloud' : '🟡 Revisi Lokal'}
                       </span>
 
                       {/* Survey Type Badge */}
@@ -625,7 +625,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           }}
                         >
                           {isSyncingThis ? (
-                            <RefreshCw size={11} className="animate-spin" />
+                            <RefreshCw size={11} className="spin-animation" />
                           ) : (
                             <UploadCloud size={11} />
                           )}
@@ -669,11 +669,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             e.stopPropagation();
                             onEditSurvey(s);
                           }}
-                          title={`Edit Data Survey & BA "${s.namaSurvey}"`}
+                          title={`Edit Informasi Survey "${s.namaSurvey}"`}
                           style={{
-                            background: 'rgba(245, 158, 11, 0.12)',
-                            border: '1px solid rgba(245, 158, 11, 0.3)',
-                            color: '#f59e0b',
+                            background: 'rgba(56, 189, 248, 0.12)',
+                            border: '1px solid rgba(56, 189, 248, 0.3)',
+                            color: '#38bdf8',
                             cursor: 'pointer',
                             padding: '3px 6px',
                             borderRadius: '4px',
@@ -725,7 +725,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </div>
                   </div>
 
-                  {/* ROW 3: LOCATION & DATE */}
+                  {/* ROW 3: SURVEYOR & REVISION META */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '55%' }} title={`Surveyor: ${s.surveyor}`}>
+                      👤 {s.surveyor || 'PLN'}
+                    </span>
+                    {s.updatedBy && (
+                      <span style={{ fontSize: '10px', color: '#38bdf8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '42%' }} title={`Terakhir diedit oleh: ${s.updatedBy}`}>
+                        ✍️ {s.updatedBy.includes('@') ? s.updatedBy.split('@')[0] : s.updatedBy}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* ROW 4: LOCATION & DATE */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#94a3b8', marginBottom: '6px' }}>
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '65%' }}>
                       📍 {s.lokasi || s.kecamatan || 'Lokasi tidak diset'}
@@ -735,7 +747,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </span>
                   </div>
 
-                  {/* ROW 4: ASSET STATISTICS */}
+                  {/* ROW 5: ASSET STATISTICS */}
                   <div style={{ display: 'flex', gap: '8px', fontSize: '11px', color: '#cbd5e1', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '6px' }}>
                     <span title="Jumlah Tiang">🏷️ {tiangCount} Tiang</span>
                     <span title="Jumlah Gardu">⚡ {garduCount} Gardu</span>

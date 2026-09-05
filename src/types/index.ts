@@ -259,6 +259,7 @@ export interface Survey {
 
     // Metadata
     userId?: string; // Owner account user_id in Supabase Auth
+    updatedBy?: string; // Email or identifier of the user who last updated this survey
     createdAt: Date;
     updatedAt: Date;
     isSynced: boolean;

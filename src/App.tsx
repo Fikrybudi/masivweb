@@ -251,10 +251,11 @@ export function App() {
 
     setIsSyncing(true);
     try {
-      // 1. Upload local unsynced surveys to Supabase (only surveys belonging to current user or newly created locally)
+      // 1. Upload local unsynced surveys to Supabase (owner surveys or if superadmin edited)
       const localSurveys = await localDb.getAllSurveys();
+      const isSuperadmin = session?.user?.user_metadata?.role === 'superadmin';
       const unsyncedSurveys = localSurveys.filter(
-        (s) => !s.isSynced && (!s.userId || s.userId === session.user.id)
+        (s) => !s.isSynced && (!s.userId || s.userId === session.user.id || isSuperadmin)
       );
       let uploadSuccessCount = 0;
       let uploadFailCount = 0;
@@ -263,6 +264,7 @@ export function App() {
         const toUpload: Survey = {
           ...survey,
           userId: survey.userId || session.user.id,
+          updatedBy: session.user.email || survey.updatedBy,
         };
         const res = await supabaseSurveyService.upsertSurvey(toUpload);
         if (res.success) {
@@ -279,9 +281,22 @@ export function App() {
       let downloadedCount = 0;
 
       if (cloudSurveys && cloudSurveys.length > 0) {
-        for (const s of cloudSurveys) {
-          await localDb.saveSurvey({ ...s, isSynced: true });
-          downloadedCount++;
+        const freshLocal = await localDb.getAllSurveys();
+        for (const cs of cloudSurveys) {
+          const localMatch = freshLocal.find((l) => l.id === cs.id);
+          if (!localMatch) {
+            // New survey from cloud: save to local cache
+            await localDb.saveSurvey({ ...cs, isSynced: true });
+            downloadedCount++;
+          } else if (localMatch.isSynced) {
+            // Local had no unpushed edits: update if cloud has newer updatedAt
+            const localTime = new Date(localMatch.updatedAt || localMatch.createdAt).getTime();
+            const cloudTime = new Date(cs.updatedAt || cs.createdAt).getTime();
+            if (cloudTime > localTime) {
+              await localDb.saveSurvey({ ...cs, isSynced: true });
+              downloadedCount++;
+            }
+          }
         }
       }
 
@@ -293,6 +308,10 @@ export function App() {
           setActiveSurvey(updated[0]);
           await localDb.setActiveSurveyId(updated[0].id);
         }
+      } else {
+        // Refresh activeSurvey with latest version
+        const currentActive = updated.find((u) => u.id === activeSurvey.id);
+        if (currentActive) setActiveSurvey(currentActive);
       }
 
       alert(
@@ -316,9 +335,14 @@ export function App() {
       return;
     }
     try {
-      const res = await supabaseSurveyService.upsertSurvey(survey);
+      const toUpload: Survey = {
+        ...survey,
+        userId: survey.userId || session.user.id,
+        updatedBy: session.user.email || survey.updatedBy,
+      };
+      const res = await supabaseSurveyService.upsertSurvey(toUpload);
       if (res.success) {
-        const updatedSurvey = { ...survey, isSynced: true };
+        const updatedSurvey = { ...toUpload, isSynced: true };
         await localDb.saveSurvey(updatedSurvey);
         const all = await localDb.getAllSurveys();
         setSurveys(all);
@@ -429,7 +453,13 @@ export function App() {
       const updatedTiangList = (activeSurvey.tiangList || []).map((t) =>
         t.id === movingTiang.id ? { ...t, koordinat: coord, updatedAt: new Date() } : t
       );
-      const updatedSurvey = { ...activeSurvey, tiangList: updatedTiangList, updatedAt: new Date() };
+      const updatedSurvey: Survey = {
+        ...activeSurvey,
+        tiangList: updatedTiangList,
+        isSynced: false,
+        updatedAt: new Date(),
+        updatedBy: session?.user?.email || activeSurvey.updatedBy,
+      };
       await localDb.saveSurvey(updatedSurvey);
       setActiveSurvey(updatedSurvey);
       setSurveys(await localDb.getAllSurveys());
@@ -528,7 +558,9 @@ export function App() {
       ...activeSurvey,
       tiangList: filteredTiangList,
       jalurList: updatedJalurList,
+      isSynced: false,
       updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
     };
 
     await localDb.saveSurvey(updatedSurvey);
@@ -561,6 +593,7 @@ export function App() {
       jalurList: updatedJalurList,
       isSynced: false,
       updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
     };
 
     await localDb.saveSurvey(updatedSurvey);
@@ -581,6 +614,7 @@ export function App() {
         ...editingSurvey,
         ...surveyData,
         updatedAt: new Date(),
+        updatedBy: session?.user?.email || editingSurvey.updatedBy,
         isSynced: false,
       };
       await localDb.saveSurvey(updatedSurvey);
@@ -647,7 +681,13 @@ export function App() {
     const updatedTiangList = (activeSurvey.tiangList || []).map((t) =>
       t.id === tiangId ? { ...t, labelPosition: newPosition, labelDistance: newDistance } : t
     );
-    const updatedSurvey = { ...activeSurvey, tiangList: updatedTiangList };
+    const updatedSurvey: Survey = {
+      ...activeSurvey,
+      tiangList: updatedTiangList,
+      isSynced: false,
+      updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
+    };
     await localDb.saveSurvey(updatedSurvey);
     setActiveSurvey(updatedSurvey);
     setSurveys(await localDb.getAllSurveys());
@@ -661,7 +701,13 @@ export function App() {
       const updatedTiangList = (activeSurvey.tiangList || []).map((t) =>
         t.id === editingTiang.id ? { ...t, ...data, updatedAt: new Date() } : t
       );
-      const updatedSurvey = { ...activeSurvey, tiangList: updatedTiangList, updatedAt: new Date() };
+      const updatedSurvey: Survey = {
+        ...activeSurvey,
+        tiangList: updatedTiangList,
+        isSynced: false,
+        updatedAt: new Date(),
+        updatedBy: session?.user?.email || activeSurvey.updatedBy,
+      };
       await localDb.saveSurvey(updatedSurvey);
       setActiveSurvey(updatedSurvey);
       setSurveys(await localDb.getAllSurveys());
@@ -710,7 +756,9 @@ export function App() {
     const updatedSurvey: Survey = {
       ...activeSurvey,
       tiangList: [...previousTiangList, newTiang],
+      isSynced: false,
       updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
     };
 
     await localDb.saveSurvey(updatedSurvey);
@@ -780,7 +828,9 @@ export function App() {
     const updatedSurvey: Survey = {
       ...activeSurvey,
       jalurList: updatedJalurList,
+      isSynced: false,
       updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
     };
 
     await localDb.saveSurvey(updatedSurvey);
@@ -804,7 +854,9 @@ export function App() {
     const updatedSurvey: Survey = {
       ...activeSurvey,
       garduList: [...(activeSurvey.garduList || []), newGardu],
+      isSynced: false,
       updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
     };
 
     await localDb.saveSurvey(updatedSurvey);
@@ -833,6 +885,7 @@ export function App() {
         jalurList: updatedJalurList,
         isSynced: false,
         updatedAt: new Date(),
+        updatedBy: session?.user?.email || activeSurvey.updatedBy,
       };
 
       await localDb.saveSurvey(updatedSurvey);
@@ -859,6 +912,7 @@ export function App() {
       jalurList: [...(activeSurvey.jalurList || []), newJalur],
       isSynced: false,
       updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
     };
 
     await localDb.saveSurvey(updatedSurvey);
@@ -885,7 +939,9 @@ export function App() {
     const updatedSurvey: Survey = {
       ...activeSurvey,
       persilList: [...(activeSurvey.persilList || []), newPersil],
+      isSynced: false,
       updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
     };
 
     await localDb.saveSurvey(updatedSurvey);

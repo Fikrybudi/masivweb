@@ -17,6 +17,7 @@ interface SurveyRow {
     nama_gardu_induk?: string;
     surveyor: string;
     tanggal_survey: string;
+    updated_by?: string;
     created_at: string;
     updated_at: string;
 }
@@ -161,6 +162,7 @@ export const supabaseSurveyService = {
                 }
             } catch {}
 
+            const editorIdentifier = user.email || user.id;
             const surveyRow: Partial<SurveyRow> = {
                 id: survey.id,
                 user_id: survey.userId || user.id, // Preserve original owner if present; only assign current user if newly created
@@ -174,11 +176,19 @@ export const supabaseSurveyService = {
                 surveyor: survey.surveyor || '',
                 tanggal_survey: tanggalIso,
                 updated_at: new Date().toISOString(),
+                updated_by: survey.updatedBy || editorIdentifier,
             };
 
-            const { error: surveyErr } = await supabase
+            let { error: surveyErr } = await supabase
                 .from('surveys')
                 .upsert(surveyRow, { onConflict: 'id' });
+
+            // Gracefully retry without updated_by if the column is not yet present in Supabase table
+            if (surveyErr && (surveyErr.message?.includes('updated_by') || surveyErr.code === 'PGRST204')) {
+                delete surveyRow.updated_by;
+                const retry = await supabase.from('surveys').upsert(surveyRow, { onConflict: 'id' });
+                surveyErr = retry.error;
+            }
 
             if (surveyErr) {
                 console.error('Survey upsert error:', surveyErr);
@@ -188,13 +198,13 @@ export const supabaseSurveyService = {
                 };
             }
 
-            if (survey.tiangList && survey.tiangList.length > 0) {
+            if (survey.tiangList !== undefined) {
                 await this.syncTiangList(survey.id, survey.tiangList);
             }
-            if (survey.garduList && survey.garduList.length > 0) {
+            if (survey.garduList !== undefined) {
                 await this.syncGarduList(survey.id, survey.garduList);
             }
-            if (survey.jalurList && survey.jalurList.length > 0) {
+            if (survey.jalurList !== undefined) {
                 await this.syncJalurList(survey.id, survey.jalurList);
             }
 
@@ -209,6 +219,22 @@ export const supabaseSurveyService = {
     },
 
     async syncTiangList(surveyId: string, tiangList: Tiang[]): Promise<void> {
+        // Clean up removed tiang from Supabase
+        try {
+            const activeIds = tiangList.map((t) => t.id).filter(Boolean);
+            if (activeIds.length > 0) {
+                await supabase
+                    .from('tiang')
+                    .delete()
+                    .eq('survey_id', surveyId)
+                    .not('id', 'in', `(${activeIds.join(',')})`);
+            } else {
+                await supabase.from('tiang').delete().eq('survey_id', surveyId);
+            }
+        } catch (err) {
+            console.warn('Sync tiang cleanup warning:', err);
+        }
+
         for (const tiang of tiangList) {
             try {
                 const tiangRow: Partial<TiangRow> = {
@@ -243,6 +269,22 @@ export const supabaseSurveyService = {
     },
 
     async syncGarduList(surveyId: string, garduList: Gardu[]): Promise<void> {
+        // Clean up removed gardu from Supabase
+        try {
+            const activeIds = garduList.map((g) => g.id).filter(Boolean);
+            if (activeIds.length > 0) {
+                await supabase
+                    .from('gardu')
+                    .delete()
+                    .eq('survey_id', surveyId)
+                    .not('id', 'in', `(${activeIds.join(',')})`);
+            } else {
+                await supabase.from('gardu').delete().eq('survey_id', surveyId);
+            }
+        } catch (err) {
+            console.warn('Sync gardu cleanup warning:', err);
+        }
+
         for (const gardu of garduList) {
             try {
                 const garduRow: Partial<GarduRow> = {
@@ -270,6 +312,22 @@ export const supabaseSurveyService = {
     },
 
     async syncJalurList(surveyId: string, jalurList: JalurKabel[]): Promise<void> {
+        // Clean up removed jalur from Supabase
+        try {
+            const activeIds = jalurList.map((j) => j.id).filter(Boolean);
+            if (activeIds.length > 0) {
+                await supabase
+                    .from('jalur')
+                    .delete()
+                    .eq('survey_id', surveyId)
+                    .not('id', 'in', `(${activeIds.join(',')})`);
+            } else {
+                await supabase.from('jalur').delete().eq('survey_id', surveyId);
+            }
+        } catch (err) {
+            console.warn('Sync jalur cleanup warning:', err);
+        }
+
         for (const jalur of jalurList) {
             try {
                 const jalurRow: Partial<JalurRow> = {
@@ -325,6 +383,7 @@ export const supabaseSurveyService = {
                     surveyor: s.surveyor,
                     tanggalSurvey: new Date(s.tanggal_survey),
                     userId: s.user_id,
+                    updatedBy: (s as any).updated_by,
                     tiangList,
                     garduList,
                     jalurList,
