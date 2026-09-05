@@ -25,6 +25,7 @@ function NumericScaleBadge() {
 
   return (
     <div
+      className="map-numeric-scale-badge"
       style={{
         position: 'absolute',
         bottom: 36,
@@ -217,24 +218,30 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
   }, [survey]);
 
   // Basemap tile configurations
-  const TILE_CONFIGS: Record<string, { url: string; attribution: string; maxZoom?: number }> = {
+  const TILE_CONFIGS: Record<string, { url: string; attribution: string; maxZoom?: number; maxNativeZoom?: number }> = {
     'osm': {
       url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 22,
+      maxNativeZoom: 19,
     },
     'satellite': {
       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
+      maxZoom: 22,
+      maxNativeZoom: 18,
     },
     'google-sat': {
       url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
       attribution: '&copy; Google Maps',
-      maxZoom: 21,
+      maxZoom: 22,
+      maxNativeZoom: 20,
     },
     'google-hybrid': {
       url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
       attribution: '&copy; Google Maps',
-      maxZoom: 21,
+      maxZoom: 22,
+      maxNativeZoom: 20,
     },
   };
 
@@ -317,6 +324,10 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
       <MapContainer
         center={center}
         zoom={17}
+        minZoom={3}
+        maxZoom={22}
+        zoomSnap={0.1}
+        zoomDelta={0.5}
         preferCanvas={true}
         style={{ width: '100%', height: '100%', minHeight: '400px' }}
       >
@@ -330,7 +341,12 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
             }
           }}
         />
-        <TileLayer url={tileUrl} attribution={attribution} />
+        <TileLayer
+          url={tileUrl}
+          attribution={attribution}
+          maxZoom={22}
+          maxNativeZoom={tileConfig.maxNativeZoom || 19}
+        />
 
         {/* Map Scale Control (distance scale bar - metric only) */}
         <ScaleControl position="bottomright" metric={true} imperial={false} />

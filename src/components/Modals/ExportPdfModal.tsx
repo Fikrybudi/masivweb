@@ -4,7 +4,7 @@
 // 100% Identical Parity to Mobile App
 // =============================================================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import html2canvas from 'html2canvas';
 import L from 'leaflet';
 import { Survey, BebanTrafoItem, Coordinate } from '../../types';
@@ -36,6 +36,8 @@ interface ExportPdfModalProps {
 
 const STORAGE_KEY = 'pln_pdf_config';
 
+export type ScaleOption = 1000 | 1500 | 2000 | 2500 | 5000 | 'auto' | 'single';
+
 export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
   visible,
   survey,
@@ -59,8 +61,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
   const [isUpratingTrafo, setIsUpratingTrafo] = useState(false);
   const [upratingKva, setUpratingKva] = useState('250 kVA');
   const [pdfRincianPosition, setPdfRincianPosition] = useState<'first' | 'all'>('first');
-  const [selectedSegmentMode, setSelectedSegmentMode] = useState<SegmentMode | 'single'>('scale');
-  const [selectedScaleRatio, setSelectedScaleRatio] = useState<number | 'auto'>(2000); // 1000, 1500, 2000, 2500, 5000, or 'auto'
+  const [selectedScaleOption, setSelectedScaleOption] = useState<ScaleOption>(2000);
 
   // Live Beban Trafo Autocomplete State
   const [allTrafoList, setAllTrafoList] = useState<BebanTrafoItem[]>([]);
@@ -152,20 +153,72 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
     }
   }, [visible, survey]);
 
+  // Save initial map view on mount/open to allow clean restore on cancel
+  const initialViewRef = useRef<{ center: L.LatLng; zoom: number } | null>(null);
+  useEffect(() => {
+    if (visible && leafletMap) {
+      initialViewRef.current = {
+        center: leafletMap.getCenter(),
+        zoom: leafletMap.getZoom()
+      };
+    }
+  }, [visible, leafletMap]);
+
+  const handleClose = () => {
+    if (leafletMap && initialViewRef.current) {
+      leafletMap.setView(initialViewRef.current.center, initialViewRef.current.zoom, { animate: false });
+    }
+    onClose();
+  };
+
   if (!visible) return null;
 
   // Derive preview scale and segment count
-  const currentZoom = leafletMap ? Math.round(leafletMap.getZoom()) : 18;
+  const currentZoom = leafletMap ? Math.round(leafletMap.getZoom() * 10) / 10 : 18;
   const centerLat = survey.tiangList?.[0]?.koordinat?.latitude || -6.8;
-  const effectiveZoom = selectedSegmentMode === 'scale'
-    ? (selectedScaleRatio === 'auto' ? currentZoom : getZoomForScaleRatio(selectedScaleRatio, centerLat))
-    : currentZoom;
-  const previewSegments = groupTiangBySegment(
-    survey.tiangList || [],
-    selectedSegmentMode as SegmentMode,
-    effectiveZoom,
-    centerLat
-  );
+  const isSinglePage = selectedScaleOption === 'single';
+  const effectiveZoom = isSinglePage
+    ? currentZoom
+    : (selectedScaleOption === 'auto'
+        ? currentZoom
+        : getZoomForScaleRatio(selectedScaleOption, centerLat));
+
+  const previewSegments = isSinglePage
+    ? [{ tiangList: survey.tiangList || [], firstNomor: 1, lastNomor: (survey.tiangList || []).length, panjangMeter: 0, pageNumber: 1, totalPages: 1 }]
+    : groupTiangBySegment(
+        survey.tiangList || [],
+        'scale',
+        effectiveZoom,
+        centerLat
+      );
+
+  // Live map response when clicking a scale button
+  const handleSelectScale = (opt: ScaleOption) => {
+    setSelectedScaleOption(opt);
+    if (!leafletMap) return;
+
+    if (opt === 'single') {
+      const allCoords: { latitude: number; longitude: number }[] = [];
+      (survey.tiangList || []).forEach(t => t?.koordinat && allCoords.push(t.koordinat));
+      (survey.garduList || []).forEach(g => g?.koordinat && allCoords.push(g.koordinat));
+      (survey.jalurList || []).forEach(j => (j?.koordinat || []).forEach(c => allCoords.push(c)));
+      if (allCoords.length > 0) {
+        const lats = allCoords.map(c => c.latitude);
+        const lngs = allCoords.map(c => c.longitude);
+        leafletMap.fitBounds([
+          [Math.min(...lats), Math.min(...lngs)],
+          [Math.max(...lats), Math.max(...lngs)]
+        ], { padding: [40, 40], animate: true });
+      }
+    } else if (opt === 'auto') {
+      if (initialViewRef.current) {
+        leafletMap.setZoom(initialViewRef.current.zoom, { animate: true });
+      }
+    } else {
+      const targetZ = getZoomForScaleRatio(opt, centerLat);
+      leafletMap.setZoom(targetZ, { animate: true });
+    }
+  };
 
   // Capture helper for Leaflet Map HTML
   const captureMapSnapshot = async (targetEl: HTMLElement): Promise<string | null> => {
@@ -183,6 +236,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
             element.classList.contains('map-control-btn') ||
             element.classList.contains('map-type-floating-btn') ||
             element.classList.contains('gis-legend') ||
+            element.classList.contains('map-numeric-scale-badge') ||
             element.classList.contains('tiang-target-cursor') ||
             element.classList.contains('gardu-target-cursor') ||
             element.classList.contains('jalur-target-cursor')
@@ -274,11 +328,11 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
         pemeriksaTitle: pdfPemeriksaTitle.trim() || 'TL HAR',
         pemeriksaName: pdfPemeriksaName.trim(),
         managerName: pdfManagerName.trim(),
-        scaleText: selectedSegmentMode === 'single'
+        scaleText: selectedScaleOption === 'single'
           ? 'Skala Menyesuaikan (Fit to Paper)'
-          : (selectedScaleRatio === 'auto'
+          : (selectedScaleOption === 'auto'
               ? `${getNumericScaleString(currentZoom, centerLat)} (Fixed Scale)`
-              : `1 : ${selectedScaleRatio.toLocaleString('id-ID')} (Fixed Scale)`),
+              : `1 : ${selectedScaleOption.toLocaleString('id-ID')} (Fixed Scale)`),
         rincianMode: pdfRincianPosition,
         rincianLines: buildRincianPekerjaan(survey, {
           bebanTrafoMap: includeBebanTrafo ? bebanTrafoMap : undefined,
@@ -317,7 +371,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
       const tiangList = survey.tiangList || [];
 
       // 4. Single-page mode or no tiangs to segment
-      if (selectedSegmentMode === 'single' || tiangList.length <= 1) {
+      if (selectedScaleOption === 'single' || tiangList.length <= 1) {
         setProgressText('Memuat dan menstabilkan tile peta satelit/jalan...');
         setProgressPercent(40);
 
@@ -370,15 +424,15 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
         return;
       }
 
-      // 5. Multi-page mode (Segmented)
+      // 5. Multi-page mode (Segmented by CAD Scale)
       setProgressText('Menganalisis segmen halaman jalur tiang...');
       setProgressPercent(20);
 
-      const targetZoom = selectedSegmentMode === 'scale'
-        ? (selectedScaleRatio === 'auto' ? currentZoom : getZoomForScaleRatio(selectedScaleRatio, centerLat))
-        : currentZoom;
+      const targetZoom = selectedScaleOption === 'auto'
+        ? currentZoom
+        : getZoomForScaleRatio(selectedScaleOption as number, centerLat);
 
-      const segments = groupTiangBySegment(tiangList, selectedSegmentMode as SegmentMode, targetZoom, centerLat);
+      const segments = groupTiangBySegment(tiangList, 'scale', targetZoom, centerLat);
       const totalPages = segments.length;
 
       const mapBase64s: string[] = [];
@@ -419,20 +473,13 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
 
         // Set camera view on Leaflet Map
         if (leafletMap) {
-          if (selectedSegmentMode === 'scale') {
-            // Locked CAD scale: center between first and last pole of segment with exact locked zoom
-            const firstCoord = seg.tiangList[0].koordinat;
-            const lastCoord = seg.tiangList[seg.tiangList.length - 1].koordinat;
-            const cLat = (firstCoord.latitude + lastCoord.latitude) / 2;
-            const cLng = (firstCoord.longitude + lastCoord.longitude) / 2;
-            leafletMap.setView([cLat, cLng], targetZoom, { animate: false });
-          } else {
-            const latLngBounds = L.latLngBounds(
-              L.latLng(bounds[0][0], bounds[0][1]),
-              L.latLng(bounds[1][0], bounds[1][1])
-            );
-            leafletMap.fitBounds(latLngBounds, { padding: [30, 30], animate: false });
-          }
+          // Locked CAD scale: center between first and last pole of segment with exact locked zoom
+          const firstCoord = seg.tiangList[0].koordinat;
+          const lastCoord = seg.tiangList[seg.tiangList.length - 1].koordinat;
+          const cLat = (firstCoord.latitude + lastCoord.latitude) / 2;
+          const cLng = (firstCoord.longitude + lastCoord.longitude) / 2;
+          leafletMap.setView([cLat, cLng], targetZoom, { animate: false });
+          leafletMap.invalidateSize();
         }
 
         // Add perpendicular cut line and A-A / B-B badges to Leaflet map (MASIV Mobile Standard)
@@ -644,7 +691,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
           <button
             type="button"
             disabled={isExporting}
-            onClick={onClose}
+            onClick={handleClose}
             style={{
               background: 'rgba(255, 255, 255, 0.1)',
               border: 'none',
@@ -1183,166 +1230,82 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
             </div>
           </div>
 
-          {/* Option 4: Mode Segmentasi Halaman PDF */}
-          <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#60a5fa', marginBottom: '6px' }}>
-              📐 Mode Segmentasi Halaman PDF:
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              <button
-                type="button"
-                onClick={() => setSelectedSegmentMode('scale')}
-                style={{
-                  background: selectedSegmentMode === 'scale' ? '#1e3a8a' : '#1e293b',
-                  border: `1px solid ${selectedSegmentMode === 'scale' ? '#3b82f6' : '#334155'}`,
-                  borderRadius: '8px',
-                  padding: '10px',
-                  textAlign: 'left',
-                  cursor: 'pointer'
-                }}
-              >
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#f8fafc' }}>
-                  📐 Skala Terkunci (Fixed Scale)
+          {/* Option 4: Skala Gambar Peta (CAD Standard) */}
+          <div style={{
+            background: '#0f172a',
+            border: '1px solid #1e3a8a',
+            borderRadius: '10px',
+            padding: '12px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#60a5fa' }}>
+                  📐 Skala Gambar Peta (CAD Standard)
+                </label>
+                <div style={{ fontSize: '10.5px', color: '#94a3b8', marginTop: '2px' }}>
+                  Peta otomatis menyesuaikan zoom & batas lembar dengan skala CAD pilihan
                 </div>
-                <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '3px' }}>
-                  Multi-page skala konsisten (Rekomendasi)
-                </div>
-              </button>
+              </div>
+              <span style={{
+                fontSize: '11px',
+                color: '#34d399',
+                fontWeight: 700,
+                background: 'rgba(16, 185, 129, 0.15)',
+                padding: '3px 10px',
+                borderRadius: '6px',
+                border: '1px solid rgba(16, 185, 129, 0.35)',
+              }}>
+                ✓ {selectedScaleOption === 'single' ? '1 Lembar (Fit to Paper)' : `${previewSegments.length} Lembar PDF`}
+              </span>
+            </div>
 
-              <button
-                type="button"
-                onClick={() => setSelectedSegmentMode('tm8')}
-                style={{
-                  background: selectedSegmentMode === 'tm8' ? '#1e3a8a' : '#1e293b',
-                  border: `1px solid ${selectedSegmentMode === 'tm8' ? '#3b82f6' : '#334155'}`,
-                  borderRadius: '8px',
-                  padding: '10px',
-                  textAlign: 'left',
-                  cursor: 'pointer'
-                }}
-              >
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#f8fafc' }}>
-                  ⚡ 8 Tiang TM / Halaman
-                </div>
-                <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '3px' }}>
-                  Dipotong per 8 tiang SUTM
-                </div>
-              </button>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(105px, 1fr))', gap: '7px' }}>
+              {[
+                { label: '1 : 1.000', value: 1000, desc: 'Detail Tinggi' },
+                { label: '1 : 1.500', value: 1500, desc: 'Jarak Dekat' },
+                { label: '1 : 2.000', value: 2000, desc: 'Standar PLN' },
+                { label: '1 : 2.500', value: 2500, desc: 'Distribusi' },
+                { label: '1 : 5.000', value: 5000, desc: 'Panjang' },
+                { label: '📐 Zoom Live', value: 'auto', desc: getNumericScaleString(currentZoom, centerLat) },
+                { label: '📄 1 Hal Full', value: 'single', desc: 'Fit to Paper' },
+              ].map((item) => {
+                const isSelected = selectedScaleOption === item.value;
+                return (
+                  <button
+                    key={String(item.value)}
+                    type="button"
+                    onClick={() => handleSelectScale(item.value as ScaleOption)}
+                    style={{
+                      background: isSelected ? 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)' : '#1e293b',
+                      color: isSelected ? '#ffffff' : '#cbd5e1',
+                      border: isSelected ? '1.5px solid #60a5fa' : '1px solid #334155',
+                      borderRadius: '8px',
+                      padding: '8px 6px',
+                      fontSize: '11.5px',
+                      fontWeight: isSelected ? 700 : 500,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '3px',
+                      transition: 'all 0.15s ease',
+                      boxShadow: isSelected ? '0 3px 8px rgba(37, 99, 235, 0.45)' : 'none',
+                    }}
+                  >
+                    <span style={{ fontWeight: 700 }}>{item.label}</span>
+                    <span style={{ fontSize: '9.5px', opacity: isSelected ? 0.9 : 0.65 }}>{item.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-              <button
-                type="button"
-                onClick={() => setSelectedSegmentMode('dist400')}
-                style={{
-                  background: selectedSegmentMode === 'dist400' ? '#1e3a8a' : '#1e293b',
-                  border: `1px solid ${selectedSegmentMode === 'dist400' ? '#3b82f6' : '#334155'}`,
-                  borderRadius: '8px',
-                  padding: '10px',
-                  textAlign: 'left',
-                  cursor: 'pointer'
-                }}
-              >
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#f8fafc' }}>
-                  📏 Per 400 Meter / Halaman
-                </div>
-                <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '3px' }}>
-                  Dipotong per 400m fisik jalur
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSelectedSegmentMode('single')}
-                style={{
-                  background: selectedSegmentMode === 'single' ? '#1e3a8a' : '#1e293b',
-                  border: `1px solid ${selectedSegmentMode === 'single' ? '#3b82f6' : '#334155'}`,
-                  borderRadius: '8px',
-                  padding: '10px',
-                  textAlign: 'left',
-                  cursor: 'pointer'
-                }}
-              >
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#f8fafc' }}>
-                  📄 1 Halaman Full
-                </div>
-                <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '3px' }}>
-                  Seluruh jalur dalam 1 lembar PDF
-                </div>
-              </button>
-
-              {/* Scale presets picker when scale mode is active */}
-              {selectedSegmentMode === 'scale' && (
-                <div style={{
-                  gridColumn: '1 / -1',
-                  background: '#0f172a',
-                  border: '1px solid #1e3a8a',
-                  borderRadius: '8px',
-                  padding: '10px 12px',
-                  marginTop: '4px',
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#60a5fa' }}>
-                      🎯 Nilai Skala Gambar Teknik (CAD Standard):
-                    </span>
-                    <span style={{
-                      fontSize: '10.5px',
-                      color: '#34d399',
-                      fontWeight: 700,
-                      background: 'rgba(16, 185, 129, 0.15)',
-                      padding: '2px 8px',
-                      borderRadius: '6px',
-                      border: '1px solid rgba(16, 185, 129, 0.35)',
-                    }}>
-                      ✓ {previewSegments.length} Lembar PDF
-                    </span>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(95px, 1fr))', gap: '6px' }}>
-                    {[
-                      { label: '1 : 1.000', value: 1000, desc: 'Detail Tinggi' },
-                      { label: '1 : 1.500', value: 1500, desc: 'Jarak Dekat' },
-                      { label: '1 : 2.000', value: 2000, desc: 'Standar PLN' },
-                      { label: '1 : 2.500', value: 2500, desc: 'Distribusi' },
-                      { label: '1 : 5.000', value: 5000, desc: 'Panjang' },
-                      { label: '📐 Zoom Live', value: 'auto', desc: getNumericScaleString(currentZoom, centerLat) },
-                    ].map((item) => {
-                      const isSelected = selectedScaleRatio === item.value;
-                      return (
-                        <button
-                          key={String(item.value)}
-                          type="button"
-                          onClick={() => setSelectedScaleRatio(item.value as any)}
-                          style={{
-                            background: isSelected ? 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)' : '#1e293b',
-                            color: isSelected ? '#ffffff' : '#cbd5e1',
-                            border: isSelected ? '1.5px solid #60a5fa' : '1px solid #334155',
-                            borderRadius: '6px',
-                            padding: '6px 8px',
-                            fontSize: '11px',
-                            fontWeight: isSelected ? 700 : 500,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            gap: '2px',
-                            transition: 'all 0.15s ease',
-                            boxShadow: isSelected ? '0 2px 6px rgba(37, 99, 235, 0.4)' : 'none',
-                          }}
-                        >
-                          <span style={{ fontWeight: 700 }}>{item.label}</span>
-                          <span style={{ fontSize: '9px', opacity: isSelected ? 0.9 : 0.65 }}>{item.desc}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div style={{ fontSize: '10.5px', color: '#94a3b8', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <span>💡</span>
-                    <span>
-                      Dilengkapi garis potong sambungan berpasangan <b style={{ color: '#ef4444' }}>A — A, B — B</b> pada setiap batas lembar.
-                    </span>
-                  </div>
-                </div>
-              )}
+            <div style={{ fontSize: '10.5px', color: '#94a3b8', marginTop: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>💡</span>
+              <span>
+                {selectedScaleOption === 'single'
+                  ? 'Seluruh jalur survey dimuat utuh dalam 1 lembar peta resolusi tinggi.'
+                  : <>Dilengkapi garis potong sambungan berpasangan <b style={{ color: '#ef4444' }}>A — A, B — B</b> antar lembar & visual peta otomatis menyesuaikan zoom skala.</>}
+              </span>
             </div>
           </div>
 
@@ -1390,7 +1353,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
           <button
             type="button"
             disabled={isExporting}
-            onClick={onClose}
+            onClick={handleClose}
             style={{
               background: '#334155',
               color: '#cbd5e1',
