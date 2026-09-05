@@ -211,6 +211,14 @@ export function getNumericScaleString(zoomLevel = 18, centerLat = -6.8): string 
     return '1 : ' + roundedRatio.toLocaleString('id-ID');
 }
 
+/**
+ * Hitung zoom level presisi yang diperlukan untuk mencapai skala rasio tertentu (e.g. 1000, 1500, 2000, 2500)
+ */
+export function getZoomForScaleRatio(scaleRatio: number, centerLat = -6.8): number {
+    const latRad = centerLat * Math.PI / 180;
+    return Math.log2((591657550.5 * Math.cos(latRad)) / scaleRatio);
+}
+
 export function calculateScaleSpanMeters(
     zoomLevel = 18,
     centerLat = -6.8,

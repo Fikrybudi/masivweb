@@ -7,7 +7,7 @@
 import React, { useState, useEffect } from 'react';
 import html2canvas from 'html2canvas';
 import L from 'leaflet';
-import { Survey, BebanTrafoItem } from '../../types';
+import { Survey, BebanTrafoItem, Coordinate } from '../../types';
 import {
   SurveyInfo,
   PageMeta,
@@ -19,7 +19,9 @@ import { buildRincianPekerjaan } from '../../utils/rincianPekerjaan';
 import {
   groupTiangBySegment,
   calculateBoundsForGroup,
-  SegmentMode
+  SegmentMode,
+  getZoomForScaleRatio,
+  getNumericScaleString
 } from '../../utils/geoUtils';
 import { trafoLoadService, normalizeGarduCode } from '../../services/trafoLoadService';
 
@@ -58,6 +60,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
   const [upratingKva, setUpratingKva] = useState('250 kVA');
   const [pdfRincianPosition, setPdfRincianPosition] = useState<'first' | 'all'>('first');
   const [selectedSegmentMode, setSelectedSegmentMode] = useState<SegmentMode | 'single'>('scale');
+  const [selectedScaleRatio, setSelectedScaleRatio] = useState<number | 'auto'>(2000); // 1000, 1500, 2000, 2500, 5000, or 'auto'
 
   // Live Beban Trafo Autocomplete State
   const [allTrafoList, setAllTrafoList] = useState<BebanTrafoItem[]>([]);
@@ -151,6 +154,19 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
 
   if (!visible) return null;
 
+  // Derive preview scale and segment count
+  const currentZoom = leafletMap ? Math.round(leafletMap.getZoom()) : 18;
+  const centerLat = survey.tiangList?.[0]?.koordinat?.latitude || -6.8;
+  const effectiveZoom = selectedSegmentMode === 'scale'
+    ? (selectedScaleRatio === 'auto' ? currentZoom : getZoomForScaleRatio(selectedScaleRatio, centerLat))
+    : currentZoom;
+  const previewSegments = groupTiangBySegment(
+    survey.tiangList || [],
+    selectedSegmentMode as SegmentMode,
+    effectiveZoom,
+    centerLat
+  );
+
   // Capture helper for Leaflet Map HTML
   const captureMapSnapshot = async (targetEl: HTMLElement): Promise<string | null> => {
     try {
@@ -212,6 +228,8 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
     setProgressText('Mempersiapkan data survey & database PLN...');
 
     try {
+      const centerLat = survey.tiangList?.[0]?.koordinat?.latitude || -6.8;
+
       // 1. Fetch live Beban Trafo if selected
       let bebanTrafoMap: Record<string, BebanTrafoItem> = {};
       let bebanTrafoList: BebanTrafoItem[] = [];
@@ -256,6 +274,11 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
         pemeriksaTitle: pdfPemeriksaTitle.trim() || 'TL HAR',
         pemeriksaName: pdfPemeriksaName.trim(),
         managerName: pdfManagerName.trim(),
+        scaleText: selectedSegmentMode === 'single'
+          ? 'Skala Menyesuaikan (Fit to Paper)'
+          : (selectedScaleRatio === 'auto'
+              ? `${getNumericScaleString(currentZoom, centerLat)} (Fixed Scale)`
+              : `1 : ${selectedScaleRatio.toLocaleString('id-ID')} (Fixed Scale)`),
         rincianMode: pdfRincianPosition,
         rincianLines: buildRincianPekerjaan(survey, {
           bebanTrafoMap: includeBebanTrafo ? bebanTrafoMap : undefined,
@@ -351,13 +374,25 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
       setProgressText('Menganalisis segmen halaman jalur tiang...');
       setProgressPercent(20);
 
-      const currentZoom = leafletMap ? leafletMap.getZoom() : 18;
-      const centerLat = tiangList[0]?.koordinat?.latitude || -6.8;
-      const segments = groupTiangBySegment(tiangList, selectedSegmentMode as SegmentMode, currentZoom, centerLat);
+      const targetZoom = selectedSegmentMode === 'scale'
+        ? (selectedScaleRatio === 'auto' ? currentZoom : getZoomForScaleRatio(selectedScaleRatio, centerLat))
+        : currentZoom;
+
+      const segments = groupTiangBySegment(tiangList, selectedSegmentMode as SegmentMode, targetZoom, centerLat);
       const totalPages = segments.length;
 
       const mapBase64s: string[] = [];
       const pageMetas: PageMeta[] = [];
+
+      // Helper to generate marker labels: A, B, C... Z, AA, AB, etc.
+      const getMarkerLabel = (index: number) => {
+        let label = '';
+        while (index >= 0) {
+          label = String.fromCharCode((index % 26) + 65) + label;
+          index = Math.floor(index / 26) - 1;
+        }
+        return label;
+      };
 
       for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
@@ -369,17 +404,119 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
         const nextAnchor = i < segments.length - 1 ? seg.tiangList[seg.tiangList.length - 1].koordinat : undefined;
         const bounds = calculateBoundsForGroup(seg.tiangList, prevAnchor, nextAnchor);
 
-        if (leafletMap) {
-          const latLngBounds = L.latLngBounds(
-            L.latLng(bounds[0][0], bounds[0][1]),
-            L.latLng(bounds[1][0], bounds[1][1])
-          );
-          leafletMap.fitBounds(latLngBounds, { padding: [30, 30], animate: false });
-          // Wait for tiles to settle on segment jump
-          await new Promise(r => setTimeout(r, 1200));
+        // Calculate boundary match line labels (A - A, B - B, C - C)
+        const prevLabel = i > 0 ? getMarkerLabel(i - 1) : null;
+        const nextLabel = i < segments.length - 1 ? getMarkerLabel(i) : null;
+
+        let boundaryInfo: string | undefined = undefined;
+        if (prevLabel && nextLabel) {
+          boundaryInfo = `Sambungan: (${prevLabel} - ${prevLabel}) s/d (${nextLabel} - ${nextLabel})`;
+        } else if (nextLabel) {
+          boundaryInfo = `Sambungan ke Hal ${i + 2} (Penanda ${nextLabel} - ${nextLabel})`;
+        } else if (prevLabel) {
+          boundaryInfo = `Sambungan dari Hal ${i} (Penanda ${prevLabel} - ${prevLabel})`;
         }
 
+        // Set camera view on Leaflet Map
+        if (leafletMap) {
+          if (selectedSegmentMode === 'scale') {
+            // Locked CAD scale: center between first and last pole of segment with exact locked zoom
+            const firstCoord = seg.tiangList[0].koordinat;
+            const lastCoord = seg.tiangList[seg.tiangList.length - 1].koordinat;
+            const cLat = (firstCoord.latitude + lastCoord.latitude) / 2;
+            const cLng = (firstCoord.longitude + lastCoord.longitude) / 2;
+            leafletMap.setView([cLat, cLng], targetZoom, { animate: false });
+          } else {
+            const latLngBounds = L.latLngBounds(
+              L.latLng(bounds[0][0], bounds[0][1]),
+              L.latLng(bounds[1][0], bounds[1][1])
+            );
+            leafletMap.fitBounds(latLngBounds, { padding: [30, 30], animate: false });
+          }
+        }
+
+        // Add perpendicular cut line and A-A / B-B badges to Leaflet map (MASIV Mobile Standard)
+        const tempBoundaryLayers: L.Layer[] = [];
+
+        const addBoundaryToMap = (anchor: Coordinate, label: string) => {
+          if (!leafletMap) return;
+
+          // Find direction of connected cable segment near anchor
+          let dx = 0;
+          let dy = 1;
+          let minDist = Infinity;
+
+          (survey.jalurList || []).forEach((j) => {
+            const coords = j.koordinat || [];
+            for (let c = 0; c < coords.length - 1; c++) {
+              const p1 = coords[c];
+              const p2 = coords[c + 1];
+              const dist = Math.hypot(
+                anchor.latitude - (p1.latitude + p2.latitude) / 2,
+                anchor.longitude - (p1.longitude + p2.longitude) / 2
+              );
+              if (dist < minDist) {
+                minDist = dist;
+                dx = p2.longitude - p1.longitude;
+                dy = p2.latitude - p1.latitude;
+              }
+            }
+          });
+
+          let len = Math.sqrt(dx * dx + dy * dy);
+          if (len === 0) { dx = 0; dy = 1; len = 1; }
+
+          // Normal vector (-dy/len, dx/len) perpendicular to cable line
+          const normX = -dy / len;
+          const normY = dx / len;
+
+          const cutHalfLength = 0.00030; // ~30 meters perpendicular to cable
+          const lineP1: [number, number] = [anchor.latitude - normY * cutHalfLength, anchor.longitude - normX * cutHalfLength];
+          const lineP2: [number, number] = [anchor.latitude + normY * cutHalfLength, anchor.longitude + normX * cutHalfLength];
+
+          // Dashed red cut line
+          const cutLine = L.polyline([lineP1, lineP2], {
+            color: '#D32F2F',
+            weight: 3,
+            dashArray: '6, 4',
+            opacity: 0.95,
+            interactive: false
+          }).addTo(leafletMap);
+          tempBoundaryLayers.push(cutLine);
+
+          // Red badge markers at both ends of cut line (creates CAD match line A - A)
+          const badgeHtml = `
+            <div style="display:flex;align-items:center;justify-content:center;pointer-events:none;">
+              <div style="background:#D32F2F;color:white;font-weight:bold;font-size:12px;padding:3px 7px;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,0.6);border:1.5px solid white;white-space:nowrap;font-family:Arial,sans-serif;">
+                ${label}
+              </div>
+            </div>
+          `;
+          const badgeIcon = L.divIcon({
+            html: badgeHtml,
+            className: 'boundary-marker-badge',
+            iconAnchor: [12, 10],
+            iconSize: [24, 20]
+          });
+
+          const b1 = L.marker(lineP1, { icon: badgeIcon, interactive: false, zIndexOffset: 9999 }).addTo(leafletMap);
+          const b2 = L.marker(lineP2, { icon: badgeIcon, interactive: false, zIndexOffset: 9999 }).addTo(leafletMap);
+          tempBoundaryLayers.push(b1, b2);
+        };
+
+        if (prevAnchor && prevLabel) addBoundaryToMap(prevAnchor, prevLabel);
+        if (nextAnchor && nextLabel) addBoundaryToMap(nextAnchor, nextLabel);
+
+        // Wait for tiles and boundary markers to settle cleanly before snapshot
+        await new Promise((r) => setTimeout(r, 1300));
+
         const base64 = await captureMapSnapshot(mapEl);
+
+        // Immediately clean up temporary boundary markers from map before next segment
+        tempBoundaryLayers.forEach((layer) => {
+          try { leafletMap?.removeLayer(layer); } catch (e) {}
+        });
+
         if (!base64) {
           alert(`Gagal mengambil gambar peta untuk segmen halaman ${i + 1}`);
           setIsExporting(false);
@@ -425,6 +562,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
           lastKode: seg.lastKode,
           panjangMeter: seg.panjangMeter,
           rincianLines: pageRincianLines,
+          boundaryInfo,
         });
 
         await new Promise(r => setTimeout(r, 200));
@@ -1130,6 +1268,81 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
                   Seluruh jalur dalam 1 lembar PDF
                 </div>
               </button>
+
+              {/* Scale presets picker when scale mode is active */}
+              {selectedSegmentMode === 'scale' && (
+                <div style={{
+                  gridColumn: '1 / -1',
+                  background: '#0f172a',
+                  border: '1px solid #1e3a8a',
+                  borderRadius: '8px',
+                  padding: '10px 12px',
+                  marginTop: '4px',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#60a5fa' }}>
+                      🎯 Nilai Skala Gambar Teknik (CAD Standard):
+                    </span>
+                    <span style={{
+                      fontSize: '10.5px',
+                      color: '#34d399',
+                      fontWeight: 700,
+                      background: 'rgba(16, 185, 129, 0.15)',
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                      border: '1px solid rgba(16, 185, 129, 0.35)',
+                    }}>
+                      ✓ {previewSegments.length} Lembar PDF
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(95px, 1fr))', gap: '6px' }}>
+                    {[
+                      { label: '1 : 1.000', value: 1000, desc: 'Detail Tinggi' },
+                      { label: '1 : 1.500', value: 1500, desc: 'Jarak Dekat' },
+                      { label: '1 : 2.000', value: 2000, desc: 'Standar PLN' },
+                      { label: '1 : 2.500', value: 2500, desc: 'Distribusi' },
+                      { label: '1 : 5.000', value: 5000, desc: 'Panjang' },
+                      { label: '📐 Zoom Live', value: 'auto', desc: getNumericScaleString(currentZoom, centerLat) },
+                    ].map((item) => {
+                      const isSelected = selectedScaleRatio === item.value;
+                      return (
+                        <button
+                          key={String(item.value)}
+                          type="button"
+                          onClick={() => setSelectedScaleRatio(item.value as any)}
+                          style={{
+                            background: isSelected ? 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)' : '#1e293b',
+                            color: isSelected ? '#ffffff' : '#cbd5e1',
+                            border: isSelected ? '1.5px solid #60a5fa' : '1px solid #334155',
+                            borderRadius: '6px',
+                            padding: '6px 8px',
+                            fontSize: '11px',
+                            fontWeight: isSelected ? 700 : 500,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '2px',
+                            transition: 'all 0.15s ease',
+                            boxShadow: isSelected ? '0 2px 6px rgba(37, 99, 235, 0.4)' : 'none',
+                          }}
+                        >
+                          <span style={{ fontWeight: 700 }}>{item.label}</span>
+                          <span style={{ fontSize: '9px', opacity: isSelected ? 0.9 : 0.65 }}>{item.desc}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ fontSize: '10.5px', color: '#94a3b8', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>💡</span>
+                    <span>
+                      Dilengkapi garis potong sambungan berpasangan <b style={{ color: '#ef4444' }}>A — A, B — B</b> pada setiap batas lembar.
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

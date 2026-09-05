@@ -4,7 +4,54 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { Coordinate, Survey, Tiang } from '../types';
 import { OverlayFile } from '../types/overlayTypes';
-import { calculateDistance } from '../utils/geoUtils';
+import { calculateDistance, getNumericScaleString } from '../utils/geoUtils';
+
+// Live Numeric Scale Indicator Badge (MASIV Mobile Standard)
+function NumericScaleBadge() {
+  const map = useMap();
+  const [scaleText, setScaleText] = useState(() => getNumericScaleString(map.getZoom(), map.getCenter().lat));
+
+  useEffect(() => {
+    const updateScale = () => {
+      const zoom = map.getZoom();
+      const lat = map.getCenter().lat;
+      setScaleText(getNumericScaleString(zoom, lat));
+    };
+    map.on('zoomend moveend', updateScale);
+    return () => {
+      map.off('zoomend moveend', updateScale);
+    };
+  }, [map]);
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 36,
+        right: 12,
+        zIndex: 900,
+        background: 'rgba(15, 23, 42, 0.90)',
+        backdropFilter: 'blur(6px)',
+        border: '1px solid rgba(56, 189, 248, 0.45)',
+        borderRadius: '6px',
+        padding: '3px 8px',
+        fontSize: '11px',
+        fontWeight: 700,
+        color: '#38bdf8',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '5px',
+        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.4)',
+        pointerEvents: 'none',
+        userSelect: 'none',
+      }}
+    >
+      <span style={{ fontSize: '11px' }}>📐</span>
+      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Skala:</span>
+      <span style={{ color: '#ffffff', fontFamily: 'monospace', letterSpacing: '0.4px', fontWeight: 800 }}>{scaleText}</span>
+    </div>
+  );
+}
 
 // Fix Leaflet marker icons
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -287,6 +334,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
 
         {/* Map Scale Control (distance scale bar - metric only) */}
         <ScaleControl position="bottomright" metric={true} imperial={false} />
+        <NumericScaleBadge />
 
 
         {/* Live Distance Estimation Line from Last Tiang to Cursor (Mobile MASIV Feature) */}

@@ -21,6 +21,7 @@ export interface SurveyInfo {
   pemeriksaTitle?: string;  // e.g. "TL HAR" or "TL RENSIS"
   pemeriksaName?: string;   // e.g. "Budi Santoso"
   managerName?: string;     // e.g. "Ahmad Hidayat"
+  scaleText?: string;       // e.g. "1 : 1.000", "1 : 1.500", "1 : 2.000 (Fixed Scale)"
   rincianLines?: string[];
   rincianMode?: 'first' | 'all'; // 'first' = halaman pertama saja (default), 'all' = per halaman / semua halaman
 }
@@ -34,6 +35,7 @@ export interface PageMeta {
   lastKode?: string;
   panjangMeter: number;
   rincianLines?: string[];
+  boundaryInfo?: string;    // e.g. "Sambungan ke Hal 2 (Penanda A - A)"
 }
 
 // Rincian Pekerjaan box style
@@ -306,7 +308,10 @@ export function drawOfficialPlnKop(
     font: fontBold,
     color: rgb(0.0, 0.22, 0.45),
   });
-  page.drawText(`Skala  : 1 : 2.500 (Fixed Scale)  |  Tgl: ${dateToday}`, {
+  const scaleDisplay = surveyInfo.scaleText
+    ? `Skala  : ${surveyInfo.scaleText}  |  Tgl: ${dateToday}`
+    : `Skala  : 1 : 2.000 (Fixed Scale)  |  Tgl: ${dateToday}`;
+  page.drawText(scaleDisplay, {
     x: col2X + 8,
     y: midY + 8,
     size: 7.5,
@@ -330,11 +335,20 @@ export function drawOfficialPlnKop(
     const lastTiangCode = meta.lastKode || `T.${meta.lastNomor}`;
     page.drawText(`Halaman ${meta.pageNumber} dari ${meta.totalPages}  |  Tiang ${firstTiangCode} s/d ${lastTiangCode} (${panjangLabel})`, {
       x: col3X + 8,
-      y: midY + 8,
-      size: 7.5,
+      y: meta.boundaryInfo ? midY + 11 : midY + 8,
+      size: 7.2,
       font: fontBold,
       color: rgb(0.85, 0.1, 0.1), // Red accent
     });
+    if (meta.boundaryInfo) {
+      page.drawText(meta.boundaryInfo, {
+        x: col3X + 8,
+        y: midY + 2,
+        size: 6.8,
+        font: fontBold,
+        color: rgb(0.83, 0.18, 0.18), // Red accent for A-A / B-B match line
+      });
+    }
   } else {
     page.drawText(`Halaman 1 dari 1 (Single Full Map)`, {
       x: col3X + 8,
