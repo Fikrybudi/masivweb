@@ -251,16 +251,23 @@ export function App() {
 
     setIsSyncing(true);
     try {
-      // 1. Upload local surveys to Supabase
+      // 1. Upload local unsynced surveys to Supabase (only surveys belonging to current user or newly created locally)
       const localSurveys = await localDb.getAllSurveys();
+      const unsyncedSurveys = localSurveys.filter(
+        (s) => !s.isSynced && (!s.userId || s.userId === session.user.id)
+      );
       let uploadSuccessCount = 0;
       let uploadFailCount = 0;
 
-      for (const survey of localSurveys) {
-        const res = await supabaseSurveyService.upsertSurvey(survey);
+      for (const survey of unsyncedSurveys) {
+        const toUpload: Survey = {
+          ...survey,
+          userId: survey.userId || session.user.id,
+        };
+        const res = await supabaseSurveyService.upsertSurvey(toUpload);
         if (res.success) {
           uploadSuccessCount++;
-          await localDb.saveSurvey({ ...survey, isSynced: true });
+          await localDb.saveSurvey({ ...toUpload, isSynced: true });
         } else {
           uploadFailCount++;
           console.warn(`Gagal upload survey ${survey.namaSurvey}:`, res.error);

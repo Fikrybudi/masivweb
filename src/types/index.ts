@@ -258,6 +258,7 @@ export interface Survey {
     tanggalSurvey: Date;
 
     // Metadata
+    userId?: string; // Owner account user_id in Supabase Auth
     createdAt: Date;
     updatedAt: Date;
     isSynced: boolean;

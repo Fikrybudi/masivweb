@@ -163,7 +163,7 @@ export const supabaseSurveyService = {
 
             const surveyRow: Partial<SurveyRow> = {
                 id: survey.id,
-                user_id: user.id,
+                user_id: survey.userId || user.id, // Preserve original owner if present; only assign current user if newly created
                 nama_survey: survey.namaSurvey || 'Survey Tanpa Nama',
                 jenis_survey: survey.jenisSurvey || 'SUTM',
                 lokasi: survey.lokasi || '',
@@ -324,6 +324,7 @@ export const supabaseSurveyService = {
                     namaGarduInduk: s.nama_gardu_induk,
                     surveyor: s.surveyor,
                     tanggalSurvey: new Date(s.tanggal_survey),
+                    userId: s.user_id,
                     tiangList,
                     garduList,
                     jalurList,
