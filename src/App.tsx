@@ -26,7 +26,7 @@ import { overlayStorage } from './services/overlayStorage';
 import { OverlayFile } from './types/overlayTypes';
 import { generateNextBranchCode, getBranchModeBannerLabel } from './utils/branchUtils';
 import { calculateDistance } from './utils/geoUtils';
-import { Layers, UploadCloud, Trash2, Menu, ChevronRight, BarChart2, Edit3 } from 'lucide-react';
+import { Layers, UploadCloud, Trash2, Menu, ChevronRight, BarChart2, Edit3, Undo2, Redo2 } from 'lucide-react';
 
 export function App() {
   // Fast Startup Splash Screen state (matching mobile app App.tsx)
@@ -101,6 +101,64 @@ export function App() {
     dist: number;
   } | null>(null);
 
+  // Undo & Redo History Stack (Matching MASIV Mobile)
+  const [undoStack, setUndoStack] = useState<Survey[]>([]);
+  const [redoStack, setRedoStack] = useState<Survey[]>([]);
+
+  const pushToUndo = (survey: Survey) => {
+    try {
+      const snapshot: Survey = JSON.parse(JSON.stringify(survey));
+      setUndoStack((prev) => [...prev.slice(-29), snapshot]);
+      setRedoStack([]); // New action clears redo stack
+    } catch (err) {
+      console.warn('Failed to snapshot survey for undo:', err);
+    }
+  };
+
+  const handleUndo = async () => {
+    if (!activeSurvey || undoStack.length === 0) return;
+
+    const previousState = undoStack[undoStack.length - 1];
+    setUndoStack((prev) => prev.slice(0, -1));
+    setRedoStack((prev) => [...prev.slice(-29), JSON.parse(JSON.stringify(activeSurvey))]);
+
+    const restoredSurvey: Survey = {
+      ...previousState,
+      isSynced: false,
+      updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
+    };
+
+    await localDb.saveSurvey(restoredSurvey);
+    setActiveSurvey(restoredSurvey);
+    const all = await localDb.getAllSurveys();
+    setSurveys(all);
+    setSelectedAsset(null);
+    setSelectedAssetType(null);
+  };
+
+  const handleRedo = async () => {
+    if (!activeSurvey || redoStack.length === 0) return;
+
+    const nextState = redoStack[redoStack.length - 1];
+    setRedoStack((prev) => prev.slice(0, -1));
+    setUndoStack((prev) => [...prev.slice(-29), JSON.parse(JSON.stringify(activeSurvey))]);
+
+    const redoneSurvey: Survey = {
+      ...nextState,
+      isSynced: false,
+      updatedAt: new Date(),
+      updatedBy: session?.user?.email || activeSurvey.updatedBy,
+    };
+
+    await localDb.saveSurvey(redoneSurvey);
+    setActiveSurvey(redoneSurvey);
+    const all = await localDb.getAllSurveys();
+    setSurveys(all);
+    setSelectedAsset(null);
+    setSelectedAssetType(null);
+  };
+
   // Resizable Sidebar & Responsive Mobile Drawer states
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     try {
@@ -162,6 +220,36 @@ export function App() {
       document.body.style.cursor = '';
     };
   }, [isResizing, sidebarWidth]);
+
+  // Global Keyboard Shortcuts (Ctrl+Z: Undo, Ctrl+Y / Ctrl+Shift+Z: Redo)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeSurvey, undoStack, redoStack]);
 
   const loadData = async () => {
     const stored = await localDb.getAllSurveys();
@@ -367,6 +455,8 @@ export function App() {
     setActiveBranchParent(null);
     setActiveBranchDirection(null);
     setMovingTiang(null);
+    setUndoStack([]);
+    setRedoStack([]);
     await localDb.setActiveSurveyId(survey.id);
   };
 
@@ -444,6 +534,7 @@ export function App() {
   // Move Tiang & Snap All Connected Jalurs (Identical to MASIV Mobile)
   const handleMoveTiang = async (tiangId: string, newCoord: Coordinate) => {
     if (!activeSurvey) return;
+    pushToUndo(activeSurvey);
 
     const targetTiang = (activeSurvey.tiangList || []).find((t) => t.id === tiangId);
     const oldCoord = targetTiang?.koordinat;
@@ -581,6 +672,7 @@ export function App() {
 
   const handleSelectDelete = async () => {
     if (!actionTiang || !activeSurvey) return;
+    pushToUndo(activeSurvey);
     const tiangId = actionTiang.id;
 
     // 1. Remove tiang and renumber remaining
@@ -644,6 +736,8 @@ export function App() {
     const confirmMsg = `Yakin ingin menghapus jalur kabel "${target.namaJalur || target.jenisJaringan}" (${Math.round(target.panjangMeter)}m)?`;
     if (!window.confirm(confirmMsg)) return;
 
+    pushToUndo(activeSurvey);
+
     const updatedJalurList = (activeSurvey.jalurList || []).filter((j) => j.id !== target.id);
     const updatedSurvey: Survey = {
       ...activeSurvey,
@@ -666,6 +760,7 @@ export function App() {
   // Submit & BA Survey Handlers
   const handleSaveBASurvey = async (surveyData: Partial<Survey>) => {
     if (editingSurvey) {
+      if (activeSurvey?.id === editingSurvey.id) pushToUndo(activeSurvey);
       // Edit mode: update existing survey
       const updatedSurvey: Survey = {
         ...editingSurvey,
@@ -735,6 +830,7 @@ export function App() {
   // Handle tiang label shift (snapped to quadrant 0..7)
   const handleTiangLabelShift = async (tiangId: string, newPosition: number, newDistance?: number) => {
     if (!activeSurvey) return;
+    pushToUndo(activeSurvey);
     const updatedTiangList = (activeSurvey.tiangList || []).map((t) =>
       t.id === tiangId ? { ...t, labelPosition: newPosition, labelDistance: newDistance } : t
     );
@@ -752,6 +848,7 @@ export function App() {
 
   const handleSaveTiang = async (data: Omit<Tiang, 'id' | 'createdAt' | 'updatedAt' | 'isSynced'>) => {
     if (!activeSurvey) return;
+    pushToUndo(activeSurvey);
 
     if (editingTiang) {
       // Update existing tiang
@@ -844,6 +941,7 @@ export function App() {
   // Handler: Confirm Auto-Connect Jalur
   const handleConfirmAutoConnect = async () => {
     if (!autoConnectPrompt || !activeSurvey) return;
+    pushToUndo(activeSurvey);
     const { prevTiang, newTiang, jenisJaringan, penghantar, penampang, dist } = autoConnectPrompt;
 
     let updatedJalurList = [...(activeSurvey.jalurList || [])];
@@ -900,6 +998,7 @@ export function App() {
 
   const handleSaveGardu = async (data: Omit<Gardu, 'id' | 'createdAt' | 'updatedAt' | 'isSynced'>) => {
     if (!activeSurvey) return;
+    pushToUndo(activeSurvey);
     const newGardu: Gardu = {
       ...data,
       id: crypto.randomUUID(),
@@ -924,6 +1023,7 @@ export function App() {
 
   const handleSaveJalur = async (data: Omit<JalurKabel, 'id' | 'createdAt' | 'updatedAt' | 'isSynced'>) => {
     if (!activeSurvey) return;
+    pushToUndo(activeSurvey);
 
     if (editingJalur) {
       const updatedJalurList = (activeSurvey.jalurList || []).map((j) =>
@@ -982,6 +1082,7 @@ export function App() {
 
   const handleSavePersil = async (data: PersilFormData) => {
     if (!activeSurvey) return;
+    pushToUndo(activeSurvey);
     const newPersil = {
       id: crypto.randomUUID(),
       namaPersil: data.namaPersil,
@@ -1286,6 +1387,100 @@ export function App() {
                   <Edit3 size={13} />
                   Edit BA
                 </button>
+
+                {/* Undo & Redo History Controls (MASIV Web & Mobile Parity) */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '2px',
+                    background: '#1e293b',
+                    padding: '2px 4px',
+                    borderRadius: '6px',
+                    border: '1px solid #334155',
+                    flexShrink: 0,
+                  }}
+                >
+                  <button
+                    onClick={handleUndo}
+                    disabled={undoStack.length === 0}
+                    title={undoStack.length > 0 ? `Undo (Ctrl+Z) - ${undoStack.length} riwayat tindakan` : 'Undo (Ctrl+Z) - Tidak ada riwayat'}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      background: undoStack.length > 0 ? '#ea580c' : 'transparent',
+                      color: undoStack.length > 0 ? '#ffffff' : '#64748b',
+                      border: 'none',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '11.5px',
+                      fontWeight: 600,
+                      cursor: undoStack.length > 0 ? 'pointer' : 'not-allowed',
+                      opacity: undoStack.length > 0 ? 1 : 0.45,
+                      whiteSpace: 'nowrap',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Undo2 size={13} />
+                    <span>Undo</span>
+                    {undoStack.length > 0 && (
+                      <span
+                        style={{
+                          background: 'rgba(255,255,255,0.25)',
+                          color: '#ffffff',
+                          fontSize: '9.5px',
+                          padding: '1px 5px',
+                          borderRadius: '10px',
+                          fontWeight: 700,
+                          marginLeft: '2px',
+                        }}
+                      >
+                        {undoStack.length}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={handleRedo}
+                    disabled={redoStack.length === 0}
+                    title={redoStack.length > 0 ? `Redo (Ctrl+Y / Ctrl+Shift+Z) - ${redoStack.length} riwayat tindakan` : 'Redo - Tidak ada riwayat'}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      background: redoStack.length > 0 ? '#0284c7' : 'transparent',
+                      color: redoStack.length > 0 ? '#ffffff' : '#64748b',
+                      border: 'none',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '11.5px',
+                      fontWeight: 600,
+                      cursor: redoStack.length > 0 ? 'pointer' : 'not-allowed',
+                      opacity: redoStack.length > 0 ? 1 : 0.45,
+                      whiteSpace: 'nowrap',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Redo2 size={13} />
+                    <span>Redo</span>
+                    {redoStack.length > 0 && (
+                      <span
+                        style={{
+                          background: 'rgba(255,255,255,0.25)',
+                          color: '#ffffff',
+                          fontSize: '9.5px',
+                          padding: '1px 5px',
+                          borderRadius: '10px',
+                          fontWeight: 700,
+                          marginLeft: '2px',
+                        }}
+                      >
+                        {redoStack.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
               </>
             )}
             {activeSurvey && (
@@ -1344,6 +1539,43 @@ export function App() {
           </ErrorBoundary>
         </div>
 
+        {/* Floating Quick Undo Button (MASIV Mobile Standard) */}
+        {activeSurvey && undoStack.length > 0 && (
+          <button
+            onClick={handleUndo}
+            title={`Undo aksi terakhir (Ctrl+Z) - ${undoStack.length} riwayat`}
+            style={{
+              position: 'absolute',
+              left: isMobile ? 16 : 24,
+              bottom: selectedAsset && toolMode === 'none' ? (isMobile ? 160 : 150) : (isMobile ? 88 : 32),
+              zIndex: 1000,
+              backgroundColor: '#FF5722',
+              color: 'white',
+              border: 'none',
+              borderRadius: '25px',
+              padding: '10px 18px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: '13.5px',
+              boxShadow: '0 4px 14px rgba(255, 87, 34, 0.45), 0 2px 5px rgba(0,0,0,0.25)',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'scale(1.05)';
+              e.currentTarget.style.backgroundColor = '#f4511e';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+              e.currentTarget.style.backgroundColor = '#FF5722';
+            }}
+          >
+            <Undo2 size={18} />
+            <span>Undo ({undoStack.length})</span>
+          </button>
+        )}
 
         {/* Floating Bottom Toolbar (MASIV Mobile Standard) */}
         {activeSurvey && (
