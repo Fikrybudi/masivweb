@@ -1387,100 +1387,6 @@ export function App() {
                   <Edit3 size={13} />
                   Edit BA
                 </button>
-
-                {/* Undo & Redo History Controls (MASIV Web & Mobile Parity) */}
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '2px',
-                    background: '#1e293b',
-                    padding: '2px 4px',
-                    borderRadius: '6px',
-                    border: '1px solid #334155',
-                    flexShrink: 0,
-                  }}
-                >
-                  <button
-                    onClick={handleUndo}
-                    disabled={undoStack.length === 0}
-                    title={undoStack.length > 0 ? `Undo (Ctrl+Z) - ${undoStack.length} riwayat tindakan` : 'Undo (Ctrl+Z) - Tidak ada riwayat'}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      background: undoStack.length > 0 ? '#ea580c' : 'transparent',
-                      color: undoStack.length > 0 ? '#ffffff' : '#64748b',
-                      border: 'none',
-                      padding: '4px 8px',
-                      borderRadius: '4px',
-                      fontSize: '11.5px',
-                      fontWeight: 600,
-                      cursor: undoStack.length > 0 ? 'pointer' : 'not-allowed',
-                      opacity: undoStack.length > 0 ? 1 : 0.45,
-                      whiteSpace: 'nowrap',
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
-                    <Undo2 size={13} />
-                    <span>Undo</span>
-                    {undoStack.length > 0 && (
-                      <span
-                        style={{
-                          background: 'rgba(255,255,255,0.25)',
-                          color: '#ffffff',
-                          fontSize: '9.5px',
-                          padding: '1px 5px',
-                          borderRadius: '10px',
-                          fontWeight: 700,
-                          marginLeft: '2px',
-                        }}
-                      >
-                        {undoStack.length}
-                      </span>
-                    )}
-                  </button>
-
-                  <button
-                    onClick={handleRedo}
-                    disabled={redoStack.length === 0}
-                    title={redoStack.length > 0 ? `Redo (Ctrl+Y / Ctrl+Shift+Z) - ${redoStack.length} riwayat tindakan` : 'Redo - Tidak ada riwayat'}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      background: redoStack.length > 0 ? '#0284c7' : 'transparent',
-                      color: redoStack.length > 0 ? '#ffffff' : '#64748b',
-                      border: 'none',
-                      padding: '4px 8px',
-                      borderRadius: '4px',
-                      fontSize: '11.5px',
-                      fontWeight: 600,
-                      cursor: redoStack.length > 0 ? 'pointer' : 'not-allowed',
-                      opacity: redoStack.length > 0 ? 1 : 0.45,
-                      whiteSpace: 'nowrap',
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
-                    <Redo2 size={13} />
-                    <span>Redo</span>
-                    {redoStack.length > 0 && (
-                      <span
-                        style={{
-                          background: 'rgba(255,255,255,0.25)',
-                          color: '#ffffff',
-                          fontSize: '9.5px',
-                          padding: '1px 5px',
-                          borderRadius: '10px',
-                          fontWeight: 700,
-                          marginLeft: '2px',
-                        }}
-                      >
-                        {redoStack.length}
-                      </span>
-                    )}
-                  </button>
-                </div>
               </>
             )}
             {activeSurvey && (
@@ -1539,42 +1445,105 @@ export function App() {
           </ErrorBoundary>
         </div>
 
-        {/* Floating Quick Undo Button (MASIV Mobile Standard) */}
-        {activeSurvey && undoStack.length > 0 && (
-          <button
-            onClick={handleUndo}
-            title={`Undo aksi terakhir (Ctrl+Z) - ${undoStack.length} riwayat`}
+        {/* Bottom-Left Undo & Redo History Controls */}
+        {activeSurvey && (
+          <div
             style={{
               position: 'absolute',
               left: isMobile ? 16 : 24,
               bottom: selectedAsset && toolMode === 'none' ? (isMobile ? 160 : 150) : (isMobile ? 88 : 32),
               zIndex: 1000,
-              backgroundColor: '#FF5722',
-              color: 'white',
-              border: 'none',
-              borderRadius: '25px',
-              padding: '10px 18px',
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              fontWeight: 700,
-              fontSize: '13.5px',
-              boxShadow: '0 4px 14px rgba(255, 87, 34, 0.45), 0 2px 5px rgba(0,0,0,0.25)',
+              gap: '4px',
+              backgroundColor: '#1e293b',
+              padding: '4px 6px',
+              borderRadius: '24px',
+              border: '1px solid #334155',
+              boxShadow: '0 4px 14px rgba(0, 0, 0, 0.35)',
               transition: 'all 0.2s ease',
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'scale(1.05)';
-              e.currentTarget.style.backgroundColor = '#f4511e';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'scale(1)';
-              e.currentTarget.style.backgroundColor = '#FF5722';
-            }}
           >
-            <Undo2 size={18} />
-            <span>Undo ({undoStack.length})</span>
-          </button>
+            <button
+              onClick={handleUndo}
+              disabled={undoStack.length === 0}
+              title={undoStack.length > 0 ? `Undo (Ctrl+Z) - ${undoStack.length} riwayat` : 'Undo (Ctrl+Z) - Tidak ada riwayat'}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: undoStack.length > 0 ? '#ea580c' : 'transparent',
+                color: undoStack.length > 0 ? '#ffffff' : '#64748b',
+                border: 'none',
+                padding: '8px 14px',
+                borderRadius: '18px',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: undoStack.length > 0 ? 'pointer' : 'not-allowed',
+                opacity: undoStack.length > 0 ? 1 : 0.45,
+                transition: 'all 0.15s ease',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <Undo2 size={15} />
+              <span>Undo</span>
+              {undoStack.length > 0 && (
+                <span
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.25)',
+                    color: '#ffffff',
+                    fontSize: '10px',
+                    padding: '1px 6px',
+                    borderRadius: '10px',
+                    fontWeight: 800,
+                  }}
+                >
+                  {undoStack.length}
+                </span>
+              )}
+            </button>
+
+            <div style={{ width: '1px', height: '16px', backgroundColor: '#334155', margin: '0 2px' }} />
+
+            <button
+              onClick={handleRedo}
+              disabled={redoStack.length === 0}
+              title={redoStack.length > 0 ? `Redo (Ctrl+Y / Ctrl+Shift+Z) - ${redoStack.length} riwayat` : 'Redo - Tidak ada riwayat'}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: redoStack.length > 0 ? '#0284c7' : 'transparent',
+                color: redoStack.length > 0 ? '#ffffff' : '#64748b',
+                border: 'none',
+                padding: '8px 14px',
+                borderRadius: '18px',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: redoStack.length > 0 ? 'pointer' : 'not-allowed',
+                opacity: redoStack.length > 0 ? 1 : 0.45,
+                transition: 'all 0.15s ease',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <Redo2 size={15} />
+              <span>Redo</span>
+              {redoStack.length > 0 && (
+                <span
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.25)',
+                    color: '#ffffff',
+                    fontSize: '10px',
+                    padding: '1px 6px',
+                    borderRadius: '10px',
+                    fontWeight: 800,
+                  }}
+                >
+                  {redoStack.length}
+                </span>
+              )}
+            </button>
+          </div>
         )}
 
         {/* Floating Bottom Toolbar (MASIV Mobile Standard) */}
