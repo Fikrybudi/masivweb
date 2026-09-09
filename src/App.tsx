@@ -1142,7 +1142,7 @@ export function App() {
   }
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden', fontFamily: 'Inter, system-ui, -apple-system, sans-serif', position: 'relative' }}>
+    <div style={{ display: 'flex', width: '100%', height: '100dvh', maxHeight: '-webkit-fill-available', position: 'fixed', inset: 0, overflow: 'hidden', fontFamily: 'Inter, system-ui, -apple-system, sans-serif' }}>
       {showSplashScreen && <SplashScreen opacity={splashOpacity} />}
 
       {/* Mobile Drawer Backdrop Overlay */}
@@ -1448,10 +1448,11 @@ export function App() {
         {/* Bottom-Left Undo & Redo History Controls */}
         {activeSurvey && (
           <div
+            className="masiv-undo-redo-panel"
             style={{
               position: 'absolute',
-              left: isMobile ? 16 : 24,
-              bottom: selectedAsset && toolMode === 'none' ? (isMobile ? 160 : 150) : (isMobile ? 88 : 32),
+              left: isMobile ? 12 : 24,
+              bottom: selectedAsset && toolMode === 'none' ? (isMobile ? 164 : 150) : (isMobile ? 104 : 32),
               zIndex: 1000,
               display: 'flex',
               alignItems: 'center',
@@ -1589,23 +1590,26 @@ export function App() {
 
         {/* Bottom Inspector Bar for Selected Asset */}
         {selectedAsset && toolMode === 'none' && (
-          <div style={{
-            position: 'absolute',
-            bottom: 84,
-            left: 16,
-            right: 16,
-            zIndex: 1000,
-            background: 'rgba(15, 23, 42, 0.94)',
-            backdropFilter: 'blur(8px)',
-            color: 'white',
-            padding: '12px 18px',
-            borderRadius: '10px',
-            border: '1px solid rgba(255, 255, 255, 0.15)',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}>
+          <div
+            className="masiv-inspector-bar"
+            style={{
+              position: 'absolute',
+              bottom: isMobile ? 96 : 84,
+              left: isMobile ? 10 : 16,
+              right: isMobile ? 10 : 16,
+              zIndex: 1000,
+              background: 'rgba(15, 23, 42, 0.94)',
+              backdropFilter: 'blur(8px)',
+              color: 'white',
+              padding: '12px 18px',
+              borderRadius: '10px',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}
+          >
             <div>
               <span style={{
                 background: selectedAssetType === 'tiang' ? '#0284c7' : selectedAssetType === 'gardu' ? '#e11d48' : '#2563eb',

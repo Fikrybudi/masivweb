@@ -7,9 +7,12 @@ html, body, #root {
   padding: 0;
   width: 100%;
   height: 100%;
+  height: 100dvh;
+  min-height: -webkit-fill-available;
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   background: #020617;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ==========================================================================
@@ -389,7 +392,116 @@ html, body, #root {
   transition: opacity 0.25s ease;
 }
 
-/* Responsive Media Queries */
+/* ==========================================================================
+   RESPONSIVE BOTTOM TOOLBAR & FLOATING CONTROLS
+   ========================================================================== */
+
+/* Main Bottom Action Bar Container */
+.masiv-bottom-toolbar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 24px;
+  bottom: max(24px, calc(env(safe-area-inset-bottom, 0px) + 18px));
+  z-index: 1500;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(12px);
+  padding: 6px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 16px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  max-width: calc(100vw - 24px);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: manipulation;
+  scrollbar-width: none;
+}
+
+.masiv-bottom-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Individual Toolbar Button */
+.masiv-toolbar-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 52px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.masiv-toolbar-btn .toolbar-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.masiv-toolbar-btn .toolbar-label {
+  font-size: 10px;
+  font-weight: 600;
+  margin-top: 2px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+/* Toolbar Mode Banners (Jalur, Persil, Underbuild, Branch, Move) */
+.masiv-mode-banner {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 24px;
+  bottom: max(24px, calc(env(safe-area-inset-bottom, 0px) + 18px));
+  z-index: 1500;
+  color: white;
+  padding: 10px 20px;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  max-width: calc(100vw - 24px);
+  touch-action: manipulation;
+}
+
+/* Tablet view (769px - 1024px) */
+@media (max-width: 1024px) {
+  .masiv-bottom-toolbar {
+    bottom: 34px;
+    bottom: max(34px, calc(env(safe-area-inset-bottom, 0px) + 26px));
+    padding: 5px;
+    border-radius: 14px;
+    gap: 3px;
+  }
+  .masiv-toolbar-btn {
+    width: 52px;
+    height: 48px;
+  }
+  .masiv-toolbar-btn .toolbar-icon {
+    font-size: 15px;
+  }
+  .masiv-toolbar-btn .toolbar-label {
+    font-size: 9.5px;
+  }
+  .masiv-mode-banner {
+    bottom: 34px;
+    bottom: max(34px, calc(env(safe-area-inset-bottom, 0px) + 26px));
+    padding: 9px 16px;
+    gap: 12px;
+  }
+}
+
+/* Responsive Media Queries for Mobile (<= 768px) */
 @media (max-width: 768px) {
   .gis-legend {
     display: none; /* Hide non-essential legend on mobile view to save map room */
@@ -405,6 +517,104 @@ html, body, #root {
   .map-type-floating-btn {
     top: 80px !important;
     right: 10px !important;
+  }
+
+  /* Raised & Responsive Bottom Toolbar on Smartphones & Tablets */
+  .masiv-bottom-toolbar {
+    bottom: 44px; /* Elevated high enough above bottom mobile address bar and gesture navigation */
+    bottom: max(44px, calc(env(safe-area-inset-bottom, 0px) + 36px));
+    padding: 4px;
+    border-radius: 13px;
+    gap: 3px;
+    max-width: calc(100vw - 16px);
+  }
+
+  .masiv-toolbar-btn {
+    width: 46px; /* 6 buttons * 46px + 15px gap = ~291px, fits any phone without overflowing */
+    height: 42px;
+    border-radius: 8px;
+  }
+
+  .masiv-toolbar-btn .toolbar-icon {
+    font-size: 13.5px;
+  }
+
+  .masiv-toolbar-btn .toolbar-label {
+    font-size: 8.5px;
+    font-weight: 700;
+    margin-top: 1px;
+  }
+
+  /* Raised Mode Banners on Mobile */
+  .masiv-mode-banner {
+    bottom: 44px;
+    bottom: max(44px, calc(env(safe-area-inset-bottom, 0px) + 36px));
+    padding: 8px 12px;
+    gap: 10px;
+    border-radius: 10px;
+    max-width: calc(100vw - 16px);
+  }
+
+  .masiv-mode-banner .banner-title {
+    font-size: 11.5px !important;
+  }
+
+  .masiv-mode-banner .banner-subtitle {
+    display: none !important; /* Hide long subtitle text on small mobile screens */
+  }
+
+  .masiv-mode-banner button {
+    padding: 5px 10px !important;
+    font-size: 11px !important;
+  }
+
+  /* Elevated Undo & Redo on Mobile */
+  .masiv-undo-redo-panel {
+    bottom: 98px !important; /* Always sits above bottom toolbar */
+    bottom: max(98px, calc(env(safe-area-inset-bottom, 0px) + 90px)) !important;
+    left: 10px !important;
+    padding: 3px 5px !important;
+  }
+
+  .masiv-undo-redo-panel button {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+  }
+
+  /* Elevated Inspector Bar on Mobile */
+  .masiv-inspector-bar {
+    bottom: 96px !important;
+    bottom: max(96px, calc(env(safe-area-inset-bottom, 0px) + 88px)) !important;
+    left: 10px !important;
+    right: 10px !important;
+    padding: 10px 14px !important;
+  }
+
+  .masiv-inspector-bar.with-undo-open {
+    bottom: 154px !important;
+  }
+}
+
+/* Small smartphone screens (<= 380px) */
+@media (max-width: 380px) {
+  .masiv-bottom-toolbar {
+    bottom: 48px;
+    bottom: max(48px, calc(env(safe-area-inset-bottom, 0px) + 40px));
+    padding: 3px;
+    gap: 2px;
+  }
+
+  .masiv-toolbar-btn {
+    width: 42px;
+    height: 40px;
+  }
+
+  .masiv-toolbar-btn .toolbar-icon {
+    font-size: 12.5px;
+  }
+
+  .masiv-toolbar-btn .toolbar-label {
+    font-size: 8px;
   }
 }
 
