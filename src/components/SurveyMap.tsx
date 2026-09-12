@@ -105,7 +105,7 @@ interface SurveyMapProps {
   onTiangLabelShift?: (tiangId: string, newPosition: number, newDistance?: number) => void;
   movingTiang?: Tiang | null;
   onTiangMove?: (tiangId: string, newCoord: Coordinate) => void;
-  mapType?: 'osm' | 'satellite' | 'google-sat' | 'google-hybrid';
+  mapType?: 'google-streets' | 'google-hybrid' | 'google-sat' | 'satellite' | 'osm';
   onToggleMapType?: () => void;
   mode?: string;
   onMapClick?: (coord: Coordinate) => void;
@@ -165,7 +165,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
   onTiangLabelShift,
   movingTiang,
   onTiangMove,
-  mapType = 'osm',
+  mapType = 'google-streets',
   onToggleMapType,
   mode = 'none',
   onMapClick,
@@ -186,6 +186,9 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
 }) => {
   const defaultCenter: [number, number] = [-6.2088, 106.8456];
   const [center, setCenter] = useState<[number, number]>(defaultCenter);
+  const [zoom, setZoom] = useState<number>(18);
+  const [activeSegmentIndex, setActiveSegmentIndex] = useState<number>(0);
+  const [hoveredTiangId, setHoveredTiangId] = useState<string | null>(null);
 
   useEffect(() => {
     if (survey?.tiangList && survey.tiangList.length > 0) {
@@ -219,20 +222,8 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
 
   // Basemap tile configurations
   const TILE_CONFIGS: Record<string, { url: string; attribution: string; maxZoom?: number; maxNativeZoom?: number }> = {
-    'osm': {
-      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-      attribution: '&copy; OpenStreetMap contributors',
-      maxZoom: 22,
-      maxNativeZoom: 19,
-    },
-    'satellite': {
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
-      maxZoom: 22,
-      maxNativeZoom: 18,
-    },
-    'google-sat': {
-      url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+    'google-streets': {
+      url: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
       attribution: '&copy; Google Maps',
       maxZoom: 22,
       maxNativeZoom: 20,
@@ -243,13 +234,31 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
       maxZoom: 22,
       maxNativeZoom: 20,
     },
+    'google-sat': {
+      url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+      attribution: '&copy; Google Maps',
+      maxZoom: 22,
+      maxNativeZoom: 20,
+    },
+    'satellite': {
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
+      maxZoom: 22,
+      maxNativeZoom: 18,
+    },
+    'osm': {
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 22,
+      maxNativeZoom: 19,
+    },
   };
 
-  const tileConfig = TILE_CONFIGS[mapType] || TILE_CONFIGS['osm'];
+  const tileConfig = TILE_CONFIGS[mapType] || TILE_CONFIGS['google-streets'];
   const tileUrl = tileConfig.url;
   const attribution = tileConfig.attribution;
 
-  const isSatellite = mapType !== 'osm';
+  const isSatellite = mapType !== 'osm' && mapType !== 'google-streets';
   const leaderLineColor = isSatellite ? '#facc15' : '#334155';
 
   const [mouseCoord, setMouseCoord] = useState<Coordinate | null>(null);
@@ -1171,10 +1180,20 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
         <button
           className="map-type-floating-btn"
           onClick={onToggleMapType}
-          title="Ganti Mode Peta (OSM / Satelit / Google)"
+          title="Ganti Mode Peta (Google Streets / Hybrid / Satelit / Esri / OSM)"
         >
-          {mapType === 'osm' ? '🗺️' : mapType === 'satellite' ? '🛰️' : mapType === 'google-sat' ? '🌍' : '🌐'}
-          <span>{mapType === 'osm' ? 'OSM' : mapType === 'satellite' ? 'Esri' : mapType === 'google-sat' ? 'Google' : 'Hybrid'}</span>
+          {mapType === 'google-streets' ? '🗺️' : mapType === 'google-hybrid' ? '🌐' : mapType === 'google-sat' ? '🌍' : mapType === 'satellite' ? '🛰️' : '🗺️'}
+          <span>
+            {mapType === 'google-streets'
+              ? 'Google Jalan'
+              : mapType === 'google-hybrid'
+              ? 'Hybrid'
+              : mapType === 'google-sat'
+              ? 'Google Sat'
+              : mapType === 'satellite'
+              ? 'Esri'
+              : 'OSM'}
+          </span>
         </button>
       )}
 

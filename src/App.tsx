@@ -44,7 +44,7 @@ export function App() {
   const [selectedAsset, setSelectedAsset] = useState<any | null>(null);
   const [selectedAssetType, setSelectedAssetType] = useState<'tiang' | 'gardu' | 'jalur' | null>(null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [mapType, setMapType] = useState<'osm' | 'satellite' | 'google-sat' | 'google-hybrid'>('osm');
+  const [mapType, setMapType] = useState<'google-streets' | 'google-hybrid' | 'google-sat' | 'satellite' | 'osm'>('google-streets');
 
   // Toolbar & Drawing Modes
   const [toolMode, setToolMode] = useState<ToolMode>('none');
@@ -1574,7 +1574,13 @@ export function App() {
               onTiangMove={handleMoveTiang}
               mapType={mapType}
               onToggleMapType={() => setMapType((prev) => {
-                const cycle: Array<'osm' | 'satellite' | 'google-sat' | 'google-hybrid'> = ['osm', 'satellite', 'google-sat', 'google-hybrid'];
+                const cycle: Array<'google-streets' | 'google-hybrid' | 'google-sat' | 'satellite' | 'osm'> = [
+                  'google-streets',
+                  'google-hybrid',
+                  'google-sat',
+                  'satellite',
+                  'osm'
+                ];
                 const idx = cycle.indexOf(prev);
                 return cycle[(idx + 1) % cycle.length];
               })}

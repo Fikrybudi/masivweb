@@ -515,8 +515,10 @@ html, body, #root {
   }
 
   .map-type-floating-btn {
-    top: 80px !important;
-    right: 10px !important;
+    top: 120px !important;
+    right: 12px !important;
+    padding: 5px 10px !important;
+    font-size: 11.5px !important;
   }
 
   /* Raised & Responsive Bottom Toolbar on Smartphones & Tablets */
