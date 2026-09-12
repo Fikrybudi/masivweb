@@ -400,6 +400,46 @@ export const supabaseSurveyService = {
         }
     },
 
+    async fetchSurveyById(surveyId: string): Promise<Survey | null> {
+        try {
+            const { data: s, error } = await supabase
+                .from('surveys')
+                .select('*')
+                .eq('id', surveyId)
+                .single();
+
+            if (error || !s) return null;
+
+            const tiangList = await this.fetchTiangBySurvey(s.id);
+            const garduList = await this.fetchGarduBySurvey(s.id);
+            const jalurList = await this.fetchJalurBySurvey(s.id);
+
+            return {
+                id: s.id,
+                namaSurvey: s.nama_survey,
+                jenisSurvey: s.jenis_survey as any,
+                lokasi: s.lokasi,
+                kecamatan: s.kecamatan,
+                kelurahan: s.kelurahan,
+                namaFeeder: s.nama_feeder,
+                namaGarduInduk: s.nama_gardu_induk,
+                surveyor: s.surveyor,
+                tanggalSurvey: new Date(s.tanggal_survey),
+                userId: s.user_id,
+                updatedBy: (s as any).updated_by,
+                tiangList,
+                garduList,
+                jalurList,
+                createdAt: new Date(s.created_at),
+                updatedAt: new Date(s.updated_at),
+                isSynced: true,
+            };
+        } catch (error) {
+            console.error('Fetch survey by id error:', error);
+            return null;
+        }
+    },
+
     async fetchTiangBySurvey(surveyId: string): Promise<Tiang[]> {
         const { data, error } = await supabase
             .from('tiang')

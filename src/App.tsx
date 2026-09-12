@@ -26,7 +26,9 @@ import { overlayStorage } from './services/overlayStorage';
 import { OverlayFile } from './types/overlayTypes';
 import { generateNextBranchCode, getBranchModeBannerLabel } from './utils/branchUtils';
 import { calculateDistance } from './utils/geoUtils';
-import { Layers, UploadCloud, Trash2, Menu, ChevronRight, BarChart2, Edit3, Undo2, Redo2 } from 'lucide-react';
+import { Layers, UploadCloud, Trash2, Menu, ChevronRight, BarChart2, Edit3, Undo2, Redo2, Bell, X } from 'lucide-react';
+import { notificationService, SuperadminNotification } from './services/notificationService';
+import { NotificationModal } from './components/Modals/NotificationModal';
 
 export function App() {
   // Fast Startup Splash Screen state (matching mobile app App.tsx)
@@ -100,6 +102,14 @@ export function App() {
     penampang: string;
     dist: number;
   } | null>(null);
+
+  // Superadmin Realtime Notifications State
+  const isSuperadmin = session?.user?.user_metadata?.role === 'superadmin';
+  const [notifications, setNotifications] = useState<SuperadminNotification[]>(() => notificationService.getLocalNotifications());
+  const [showNotificationModal, setShowNotificationModal] = useState<boolean>(false);
+  const [activeToast, setActiveToast] = useState<SuperadminNotification | null>(null);
+
+  const unreadNotifCount = notifications.filter((n) => !n.read).length;
 
   // Undo & Redo History Stack (Matching MASIV Mobile)
   const [undoStack, setUndoStack] = useState<Survey[]>([]);
@@ -250,6 +260,94 @@ export function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeSurvey, undoStack, redoStack]);
+
+  // Realtime & Offline Catch-up for Superadmin
+  useEffect(() => {
+    if (!session || !isSuperadmin) return;
+
+    // 1. Request browser notification permission politely
+    notificationService.requestBrowserPermission();
+
+    // 2. Offline Catch-up check: Find surveys uploaded or modified while superadmin was offline
+    notificationService.checkCatchupSurveys(session.user.id).then((catchups) => {
+      if (catchups.length > 0) {
+        setNotifications((prev) => {
+          const existingIds = new Set(prev.map((n) => n.id));
+          const newItems = catchups.filter((c) => !existingIds.has(c.id));
+          if (newItems.length > 0) {
+            const combined = [...newItems, ...prev];
+            notificationService.saveLocalNotifications(combined);
+            return combined;
+          }
+          return prev;
+        });
+
+        // Show toast alert for catchup items
+        setActiveToast({
+          ...catchups[0],
+          namaSurvey: `${catchups.length} Aktivitas Survey Baru Masuk`,
+          surveyor: catchups[0].surveyor,
+        });
+        notificationService.playNotificationChime();
+      }
+    });
+
+    // 3. Subscribe to Supabase Realtime for live survey changes
+    const unsubscribe = notificationService.subscribeToSuperadminNotifications(
+      session.user.id,
+      (newNotif) => {
+        setNotifications((prev) => [newNotif, ...prev.filter((n) => n.id !== newNotif.id)]);
+        setActiveToast(newNotif);
+
+        // Also refresh surveys list from cloud so the superadmin can see the new survey immediately
+        supabaseSurveyService.fetchAllSurveys().then((cloudSurveys: Survey[]) => {
+          if (cloudSurveys && cloudSurveys.length > 0) {
+            setSurveys((prev) => {
+              const localMap = new Map(prev.map((s) => [s.id, s]));
+              cloudSurveys.forEach((cs: Survey) => {
+                localMap.set(cs.id, { ...cs, isSynced: true });
+              });
+              return Array.from(localMap.values());
+            });
+          }
+        }).catch(() => {});
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [session, isSuperadmin]);
+
+  // Auto-dismiss active notification toast after 6 seconds
+  useEffect(() => {
+    if (!activeToast) return;
+    const timer = setTimeout(() => {
+      setActiveToast(null);
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [activeToast]);
+
+  const handleSelectSurveyById = async (surveyId: string) => {
+    const existing = surveys.find((s) => s.id === surveyId);
+    if (existing) {
+      handleSelectSurvey(existing);
+      return;
+    }
+
+    try {
+      const fetched = await supabaseSurveyService.fetchSurveyById(surveyId);
+      if (fetched) {
+        await localDb.saveSurvey(fetched);
+        setSurveys((prev) => [fetched, ...prev.filter((s) => s.id !== fetched.id)]);
+        handleSelectSurvey(fetched);
+      } else {
+        alert('Survey tidak ditemukan di cloud atau telah dihapus.');
+      }
+    } catch (err: any) {
+      alert('Gagal memuat survey dari cloud: ' + (err.message || String(err)));
+    }
+  };
 
   const loadData = async () => {
     const stored = await localDb.getAllSurveys();
@@ -1413,6 +1511,52 @@ export function App() {
                 Hapus
               </button>
             )}
+
+            {/* Superadmin Realtime Survey Activity Bell */}
+            {isSuperadmin && (
+              <button
+                onClick={() => {
+                  setShowNotificationModal(true);
+                  notificationService.setLastSeenTimestamp();
+                }}
+                title={unreadNotifCount > 0 ? `${unreadNotifCount} Notifikasi Survey Baru di Cloud` : 'Notifikasi Survey Cloud (Superadmin)'}
+                style={{
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  background: unreadNotifCount > 0 ? 'rgba(234, 88, 12, 0.25)' : '#1e293b',
+                  color: unreadNotifCount > 0 ? '#fb923c' : '#94a3b8',
+                  border: unreadNotifCount > 0 ? '1px solid #ea580c' : '1px solid #334155',
+                  padding: '6px 10px',
+                  borderRadius: '6px',
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <Bell size={13} />
+                <span>Notifikasi</span>
+                {unreadNotifCount > 0 && (
+                  <span
+                    style={{
+                      background: '#ea580c',
+                      color: 'white',
+                      fontSize: '9.5px',
+                      fontWeight: 800,
+                      padding: '1px 5px',
+                      borderRadius: '10px',
+                      marginLeft: '2px',
+                    }}
+                  >
+                    {unreadNotifCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </header>
 
@@ -1949,6 +2093,104 @@ export function App() {
         onClose={() => setShowImportModal(false)}
         overlays={overlays}
         onOverlaysChange={handleOverlaysChange}
+      />
+
+      {/* Floating Superadmin Live Notification Toast */}
+      {activeToast && (
+        <div
+          style={{
+            position: 'absolute',
+            top: isMobile ? 80 : 76,
+            right: isMobile ? 12 : 24,
+            zIndex: 2200,
+            background: 'rgba(15, 23, 42, 0.96)',
+            backdropFilter: 'blur(12px)',
+            border: activeToast.type === 'INSERT' ? '1px solid #22c55e' : '1px solid #38bdf8',
+            borderRadius: '12px',
+            padding: '12px 16px',
+            color: 'white',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            maxWidth: '380px',
+          }}
+        >
+          <div
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              backgroundColor: activeToast.type === 'INSERT' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(56, 189, 248, 0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: activeToast.type === 'INSERT' ? '#4ade80' : '#38bdf8',
+              flexShrink: 0,
+            }}
+          >
+            <Bell size={16} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', color: activeToast.type === 'INSERT' ? '#4ade80' : '#38bdf8' }}>
+              {activeToast.type === 'INSERT' ? '🔔 Survey Baru di Cloud' : '✏️ Survey Diperbarui di Cloud'}
+            </div>
+            <div style={{ fontSize: '13px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {activeToast.namaSurvey}
+            </div>
+            <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+              Oleh {activeToast.surveyor}
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <button
+              onClick={() => {
+                handleSelectSurveyById(activeToast.surveyId);
+                setActiveToast(null);
+              }}
+              style={{
+                background: '#0284c7',
+                border: 'none',
+                color: 'white',
+                padding: '5px 10px',
+                borderRadius: '6px',
+                fontSize: '11px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Buka
+            </button>
+            <button
+              onClick={() => setActiveToast(null)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#64748b',
+                cursor: 'pointer',
+                padding: '4px',
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Superadmin Notification History Modal */}
+      <NotificationModal
+        isOpen={showNotificationModal}
+        onClose={() => setShowNotificationModal(false)}
+        notifications={notifications}
+        onMarkAllRead={() => {
+          const updated = notificationService.markAllAsRead();
+          setNotifications(updated);
+        }}
+        onClearAll={() => {
+          notificationService.clearAll();
+          setNotifications([]);
+        }}
+        onSelectSurvey={handleSelectSurveyById}
       />
     </div>
 
