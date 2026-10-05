@@ -43,15 +43,33 @@ export async function parseOverlayFile(file: File): Promise<OverlayGeoData> {
  */
 export function detectOverlayType(
   data: OverlayGeoData,
-  rawCsvHeader?: string[]
+  rawCsvHeader?: string[],
+  fileName?: string
 ): OverlayDataType {
-  // If there are polylines → most likely JTM
-  if (data.polylines.length > 0) return 'jtm';
+  // Check filename first if provided
+  if (fileName && /jtr|sutr|sktr|tegangan.*rendah/i.test(fileName)) {
+    return 'jtr';
+  }
+
+  // If there are polylines
+  if (data.polylines.length > 0) {
+    const hasJtrPolyline = data.polylines.some((pl) => /jtr|sutr|sktr|tegangan.*rendah/i.test(pl.name));
+    if (hasJtrPolyline) return 'jtr';
+    return 'jtm';
+  }
 
   // Check point properties for known column patterns
   if (data.points.length > 0) {
     const props = data.points[0].properties;
     const keys = Object.keys(props).map((k) => k.toUpperCase());
+
+    // Check if points explicitly indicate JTR / Tiang TR
+    const hasJtrPoint = data.points.some(
+      (pt) =>
+        /jtr|sutr|sktr|tiang.*tr|pole.*tr|^tr[\s\-_0-9]/i.test(pt.name) ||
+        /tr|sutr|sktr/i.test(pt.properties['JENIS'] || pt.properties['TYPE'] || pt.properties['jenis'] || '')
+    );
+    if (hasJtrPoint) return 'jtr';
 
     // Gardu indicators
     if (
@@ -75,7 +93,7 @@ export function detectOverlayType(
     }
   }
 
-  return 'custom';
+  return 'jtr';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -378,16 +378,28 @@ export const LayerControlModal: React.FC<LayerControlModalProps> = ({
                   new Set((ol.data?.polylines || []).map((pl) => pl.name).filter(Boolean))
                 );
                 const points = ol.data?.points || [];
+                const isJtrLayer = ol.type === 'jtr' || /jtr|sutr|sktr/i.test(ol.name);
                 const garduCount = points.filter(
                   (pt) =>
-                    pt.properties['CLASSIFICATION']?.includes('GD') ||
-                    pt.properties['TYPE_GARDU'] === 'GD' ||
-                    pt.name.match(/^[A-Za-z]{2,4}\d{3}[A-Za-z]?$/)
+                    !isJtrLayer &&
+                    (pt.properties['CLASSIFICATION']?.includes('GD') ||
+                      pt.properties['TYPE_GARDU'] === 'GD' ||
+                      pt.name.match(/^[A-Za-z]{2,4}\d{3}[A-Za-z]?$/))
                 ).length;
                 const proteksiCount = points.filter(
                   (pt) =>
-                    /lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.name) ||
-                    /lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.properties['JENIS'] || pt.properties['jenis'] || '')
+                    !isJtrLayer &&
+                    (/lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.name) ||
+                      /lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.properties['JENIS'] || pt.properties['jenis'] || ''))
+                ).length;
+                const jtrTiangCount = points.filter(
+                  (pt) =>
+                    isJtrLayer ||
+                    (!pt.properties['CLASSIFICATION']?.includes('GD') &&
+                      pt.properties['TYPE_GARDU'] !== 'GD' &&
+                      !pt.name.match(/^[A-Za-z]{2,4}\d{3}[A-Za-z]?$/) &&
+                      !/lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.name) &&
+                      !/lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.properties['JENIS'] || pt.properties['jenis'] || ''))
                 ).length;
 
                 return (
@@ -440,11 +452,11 @@ export const LayerControlModal: React.FC<LayerControlModalProps> = ({
                     {/* Sub-layers (Only shown if master file is ON) */}
                     {ol.visible && (
                       <div style={{ paddingLeft: '8px', marginTop: '8px' }}>
-                        {/* ⚡ JTM Per Penyulang Switches */}
+                        {/* ⚡ JTM / JTR Per Penyulang Switches */}
                         {uniqueFeeders.length > 0 && (
                           <div style={{ marginTop: '8px' }}>
-                            <div style={{ fontSize: '11px', fontWeight: 700, color: '#ec4899', marginBottom: '6px' }}>
-                              ⚡ PENYULANG JTM ({uniqueFeeders.length} jalur)
+                            <div style={{ fontSize: '11px', fontWeight: 700, color: isJtrLayer ? '#FF6600' : '#ec4899', marginBottom: '6px' }}>
+                              {isJtrLayer ? '🔌 JALUR JTR' : '⚡ PENYULANG JTM'} ({uniqueFeeders.length} jalur)
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                               {uniqueFeeders.map((feederName) => {
@@ -736,6 +748,57 @@ export const LayerControlModal: React.FC<LayerControlModalProps> = ({
                                   })}
                                 </div>
                               )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* 🔌 Titik Tiang TR Eksisting Switches */}
+                        {(jtrTiangCount > 0 || isJtrLayer) && (() => {
+                          const isAllJtrVis = !ol.hiddenTypes?.includes('jtr') && !ol.hiddenTypes?.includes('custom');
+                          return (
+                            <div style={{ marginTop: '10px' }}>
+                              <div
+                                onClick={() => {
+                                  handleToggleType(ol, 'jtr', !isAllJtrVis);
+                                  handleToggleType(ol, 'custom', !isAllJtrVis);
+                                }}
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  padding: '6px 10px',
+                                  background: 'rgba(124, 58, 237, 0.15)',
+                                  border: '1px solid rgba(124, 58, 237, 0.35)',
+                                  borderRadius: '6px',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#7C3AED', border: '1.5px solid white' }} />
+                                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#c4b5fd' }}>
+                                    Tiang TR Eksisting ({jtrTiangCount} titik)
+                                  </span>
+                                </div>
+                                <div style={{
+                                  width: '32px',
+                                  height: '18px',
+                                  borderRadius: '9px',
+                                  background: isAllJtrVis ? '#7C3AED' : '#475569',
+                                  position: 'relative',
+                                  transition: 'all 0.2s',
+                                }}>
+                                  <div style={{
+                                    width: '14px',
+                                    height: '14px',
+                                    borderRadius: '50%',
+                                    background: 'white',
+                                    position: 'absolute',
+                                    top: '2px',
+                                    left: isAllJtrVis ? '16px' : '2px',
+                                    transition: 'all 0.2s',
+                                  }} />
+                                </div>
+                              </div>
                             </div>
                           );
                         })()}

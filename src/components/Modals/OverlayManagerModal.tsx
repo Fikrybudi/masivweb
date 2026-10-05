@@ -27,22 +27,24 @@ function generateId(): string {
 }
 
 const TYPE_LABELS: Record<OverlayDataType, string> = {
-  jtm: '⚡ JTM (Jaringan)',
-  gardu: '🔌 Gardu',
+  jtm: '⚡ JTM (Jaringan TM)',
+  jtr: '🔌 JTR (Jaringan & Tiang TR)',
+  gardu: '🏠 Gardu Distribusi',
   proteksi: '🛡️ Proteksi',
-  custom: '📍 Custom',
+  custom: '🔌 JTR (Eksisting)',
 };
 
 const TYPE_OPTIONS: { value: OverlayDataType; label: string }[] = [
-  { value: 'jtm', label: '⚡ JTM (Jaringan/Polyline)' },
-  { value: 'gardu', label: '🔌 Gardu (Titik)' },
+  { value: 'jtm', label: '⚡ JTM (Jaringan TM/Polyline)' },
+  { value: 'jtr', label: '🔌 JTR (Jaringan & Tiang TR)' },
+  { value: 'gardu', label: '🏠 Gardu (Titik)' },
   { value: 'proteksi', label: '🛡️ Proteksi (Titik)' },
-  { value: 'custom', label: '📍 Custom' },
 ];
 
 const COLOR_PRESETS = [
   'multi',
-  '#FFC107',
+  '#FF6600', // Oren menyala (JTR standard)
+  '#FF5500',
   '#FF9800',
   '#F44336',
   '#E91E63',
@@ -72,8 +74,8 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
   // Import confirmation state
   const [pendingOverlay, setPendingOverlay] = useState<OverlayFile | null>(null);
   const [pendingName, setPendingName] = useState('');
-  const [pendingType, setPendingType] = useState<OverlayDataType>('custom');
-  const [pendingColor, setPendingColor] = useState('multi');
+  const [pendingType, setPendingType] = useState<OverlayDataType>('jtr');
+  const [pendingColor, setPendingColor] = useState('#FF6600');
 
   if (!visible) return null;
 
@@ -91,7 +93,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
     try {
       setImporting(true);
       const geoData = await parseOverlayFile(file);
-      const detectedType = detectOverlayType(geoData);
+      const detectedType = detectOverlayType(geoData, undefined, file.name);
 
       const totalFeatures = geoData.points.length + geoData.polylines.length;
       if (totalFeatures === 0) {
@@ -100,13 +102,15 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
         return;
       }
 
+      const defaultColor = detectedType === 'jtr' ? '#FF6600' : undefined;
+
       const overlay: OverlayFile = {
         id: generateId(),
         name: file.name.replace(/\.[^.]+$/, ''),
         type: detectedType,
         visible: true,
         opacity: 0.7,
-        color: undefined,
+        color: defaultColor,
         data: geoData,
         importedAt: new Date().toISOString(),
       };
@@ -114,7 +118,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
       setPendingOverlay(overlay);
       setPendingName(overlay.name);
       setPendingType(detectedType);
-      setPendingColor('multi');
+      setPendingColor(detectedType === 'jtr' ? '#FF6600' : 'multi');
       setImportStep('confirm');
       setImporting(false);
     } catch (err: any) {
@@ -126,11 +130,15 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
   const handleConfirmImport = async () => {
     if (!pendingOverlay) return;
 
+    const resolvedColor = (pendingType === 'jtm' || pendingType === 'jtr')
+      ? (pendingColor === 'multi' ? (pendingType === 'jtr' ? '#FF6600' : undefined) : pendingColor)
+      : undefined;
+
     const finalOverlay: OverlayFile = {
       ...pendingOverlay,
       name: pendingName.trim() || pendingOverlay.name,
       type: pendingType,
-      color: pendingType === 'jtm' ? (pendingColor === 'multi' ? undefined : pendingColor) : undefined,
+      color: resolvedColor,
     };
 
     const updated = [...overlays, finalOverlay];
@@ -366,15 +374,21 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                 </div>
               </div>
 
-              {/* Color Presets (If JTM) */}
-              {pendingType === 'jtm' && (
+              {/* Color Presets (If JTM or JTR) */}
+              {(pendingType === 'jtm' || pendingType === 'jtr') && (
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 600, color: '#94a3b8', marginBottom: '6px' }}>
-                    Warna Jalur
+                    Warna Jalur {pendingType === 'jtr' ? 'JTR (Default: Oren Menyala)' : 'JTM'}
                   </label>
+                  {pendingType === 'jtr' && (
+                    <div style={{ fontSize: '11px', color: '#fb923c', marginBottom: '8px', lineHeight: 1.4 }}>
+                      💡 Jalur JTR otomatis ditampilkan dalam <b>warna oren menyala</b>, dan titik tiang TR eksisting akan berikon <b>lingkaran ungu (#7C3AED)</b>.
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                     {COLOR_PRESETS.map((c) => {
                       if (c === 'multi') {
+                        if (pendingType === 'jtr') return null; // JTR uses unified glowing orange
                         const isSelected = pendingColor === 'multi';
                         return (
                           <button

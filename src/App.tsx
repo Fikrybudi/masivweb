@@ -1637,7 +1637,7 @@ export function App() {
               }}
             >
               <Undo2 size={15} />
-              <span>Undo</span>
+              <span className="masiv-undo-label">Undo</span>
               {undoStack.length > 0 && (
                 <span
                   style={{
@@ -1678,7 +1678,7 @@ export function App() {
               }}
             >
               <Redo2 size={15} />
-              <span>Redo</span>
+              <span className="masiv-undo-label">Redo</span>
               {redoStack.length > 0 && (
                 <span
                   style={{

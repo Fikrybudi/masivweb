@@ -536,10 +536,17 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
           const isUnderbuildSelected = underbuildTiangIds.includes(t.id);
 
           if (isExisting) {
-            dotColor = '#757575';
-            dotBorder = '#424242';
-            badgeBorderColor = '#757575';
-            labelTextColor = '#616161';
+            if (isSUTR) {
+              dotColor = '#7C3AED'; // Purple for Tiang TR Existing
+              dotBorder = '#5B21B6';
+              badgeBorderColor = '#7C3AED';
+              labelTextColor = '#5B21B6';
+            } else {
+              dotColor = '#757575'; // Grey for Tiang TM Existing
+              dotBorder = '#424242';
+              badgeBorderColor = '#757575';
+              labelTextColor = '#616161';
+            }
           } else if (isSUTR) {
             dotColor = '#00E676';
             dotBorder = '#00A844';
@@ -953,11 +960,14 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
 
           return (
             <React.Fragment key={ol.id}>
-              {/* --- POLYLINES (JTM Feeders) --- */}
+              {/* --- POLYLINES (JTM / JTR Feeders) --- */}
               {ol.data.polylines.map((pl, plIdx) => {
                 if (ol.hiddenFeeders && ol.hiddenFeeders.includes(pl.name)) return null;
+                const isJTR = ol.type === 'jtr' || /jtr|sutr|sktr/i.test(pl.name) || /jtr|sutr|sktr/i.test(ol.name);
                 const feederIdx = uniqueFeeders.indexOf(pl.name || 'Unknown');
-                const color = ol.color || OVERLAY_FEEDER_COLORS[feederIdx % OVERLAY_FEEDER_COLORS.length];
+                // For JTR: vibrant glowing orange ("oren menyala"), default #FF6600
+                const defaultColor = isJTR ? '#FF6600' : OVERLAY_FEEDER_COLORS[feederIdx % OVERLAY_FEEDER_COLORS.length];
+                const color = ol.color || defaultColor;
                 const positions: [number, number][] = pl.coords.map((c) => [c.lat, c.lng]);
 
                 return (
@@ -966,14 +976,15 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                     positions={positions}
                     pathOptions={{
                       color,
-                      weight: 2.6,
+                      weight: isJTR ? 3.2 : 2.6,
                       opacity,
                     }}
                   >
                     <Popup>
                       <div style={{ padding: '4px', fontSize: '13px' }}>
-                        <b style={{ color, fontSize: '14px' }}>{pl.name || 'JTM Eksisting'}</b>
+                        <b style={{ color, fontSize: '14px' }}>{pl.name || (isJTR ? 'JTR Eksisting' : 'JTM Eksisting')}</b>
                         <div style={{ fontSize: '11px', color: '#64748b', marginTop: '3px' }}>
+                          <i>{isJTR ? 'JTR Eksisting (Tegangan Rendah)' : 'JTM Eksisting (Tegangan Menengah)'}</i><br />
                           <i>Layer: {ol.name}</i>
                         </div>
                       </div>
@@ -982,7 +993,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                 );
               })}
 
-              {/* --- POINTS (Gardu / Proteksi / Observasi / Custom) --- */}
+              {/* --- POINTS (Gardu / Proteksi / Observasi / Tiang TR / Custom) --- */}
               {ol.data.points.map((pt, ptIdx) => {
                 const lowerName = pt.name.toLowerCase();
                 const isObservation =
@@ -1015,6 +1026,16 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                   /lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.properties['JENIS'] || pt.properties['jenis'] || '') ||
                   /lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.properties['TYPE'] || pt.properties['type'] || '');
 
+                const isJtrPoint =
+                  !isObservation &&
+                  !isGarduPoint &&
+                  !isProteksiPoint &&
+                  (ol.type === 'jtr' ||
+                    /tiang.*tr|jtr|sutr|sktr|pole.*tr|^tr[\s\-_0-9]/i.test(pt.name) ||
+                    /tr|sutr|sktr/i.test(pt.properties['JENIS'] || pt.properties['jenis'] || '') ||
+                    /tr|sutr|sktr/i.test(pt.properties['TYPE'] || pt.properties['type'] || '') ||
+                    ol.type === 'custom');
+
                 const ptFeeder =
                   pt.properties['feeder'] ||
                   pt.properties['FEEDER'] ||
@@ -1030,8 +1051,8 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                 if (isProteksiPoint) {
                   if (ol.hiddenTypes && (ol.hiddenTypes.includes('proteksi') || (ptFeeder && ol.hiddenTypes.includes('proteksi_' + ptFeeder)))) return null;
                 }
-                if (!isGarduPoint && !isProteksiPoint && !isObservation) {
-                  if (ol.hiddenTypes && (ol.hiddenTypes.includes('custom') || (ptFeeder && ol.hiddenTypes.includes('custom_' + ptFeeder)))) return null;
+                if (isJtrPoint) {
+                  if (ol.hiddenTypes && (ol.hiddenTypes.includes('jtr') || ol.hiddenTypes.includes('custom') || (ptFeeder && (ol.hiddenTypes.includes('jtr_' + ptFeeder) || ol.hiddenTypes.includes('custom_' + ptFeeder))))) return null;
                 }
 
                 if (isObservation) {
@@ -1147,14 +1168,55 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                   );
                 }
 
-                // Default Custom Point
+                if (isJtrPoint) {
+                  const trMarkerColor = '#7C3AED'; // Ungu terang (Purple) - distinct from TM/Gardu/Proteksi
+                  const trMarkerIcon = new L.DivIcon({
+                    className: `overlay-tiang-tr overlay-${ol.id}`,
+                    html: `<div style="width:13px;height:13px;background:${trMarkerColor};border:2px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.5);opacity:${opacity}"></div>`,
+                    iconSize: [17, 17],
+                    iconAnchor: [8.5, 8.5],
+                  });
+
+                  const trLabelIcon = new L.DivIcon({
+                    className: `overlay-tiang-tr-label overlay-${ol.id}`,
+                    html: `<div style="color:${trMarkerColor};font-size:9.5px;font-weight:bold;white-space:nowrap;text-shadow:1px 1px 2px white,-1px -1px 2px white,1px -1px 2px white,-1px 1px 2px white,0 0 3px white;opacity:${opacity}">${pt.name}</div>`,
+                    iconSize: [80, 16],
+                    iconAnchor: [-10, 5],
+                  });
+
+                  const noTiang = pt.properties['NO_TIANG'] || pt.properties['no_tiang'] || pt.properties['NOMOR'] || pt.name;
+                  const jenisTiang = pt.properties['JENIS_TIANG'] || pt.properties['jenis'] || pt.properties['UKURAN'] || '';
+                  const garduAsal = pt.properties['GARDU'] || pt.properties['gardu'] || pt.properties['PENYULANG'] || '';
+
+                  return (
+                    <React.Fragment key={`ovl-tr-${ol.id}-${ptIdx}`}>
+                      <Marker position={[pt.lat, pt.lng]} icon={trMarkerIcon}>
+                        <Popup>
+                          <div style={{ padding: '4px', fontSize: '13px' }}>
+                            <b style={{ color: trMarkerColor, fontSize: '14px' }}>{pt.name || 'Tiang TR Eksisting'}</b>
+                            <div style={{ fontSize: '11.5px', color: '#7c3aed', fontWeight: 600, marginTop: '2px' }}>
+                              📍 Tiang TR Eksisting
+                            </div>
+                            {noTiang && noTiang !== pt.name && <div style={{ fontSize: '12px', marginTop: '2px' }}><b>No Tiang:</b> {noTiang}</div>}
+                            {jenisTiang && <div style={{ fontSize: '12px' }}><b>Spesifikasi:</b> {jenisTiang}</div>}
+                            {garduAsal && <div style={{ fontSize: '12px' }}><b>Gardu/Feeder:</b> {garduAsal}</div>}
+                            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}><i>Layer: {ol.name}</i></div>
+                          </div>
+                        </Popup>
+                      </Marker>
+                      <Marker position={[pt.lat, pt.lng]} icon={trLabelIcon} interactive={false} />
+                    </React.Fragment>
+                  );
+                }
+
+                // Default Point
                 return (
                   <CircleMarker
                     key={`ovl-cst-${ol.id}-${ptIdx}`}
                     center={[pt.lat, pt.lng]}
                     radius={5}
                     pathOptions={{
-                      fillColor: '#607D8B',
+                      fillColor: '#7C3AED',
                       color: 'white',
                       weight: 2,
                       fillOpacity: opacity,
@@ -1164,6 +1226,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                     <Popup>
                       <div style={{ padding: '4px', fontSize: '13px' }}>
                         <b>{pt.name}</b>
+                        <div style={{ fontSize: '11px', color: '#7c3aed', marginTop: '2px' }}><i>Tiang / Titik TR Eksisting</i></div>
                         <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}><i>Layer: {ol.name}</i></div>
                       </div>
                     </Popup>
@@ -1227,7 +1290,11 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
         </div>
         <div className="gis-legend-item">
           <svg width="18" height="12" style={{ marginRight: 8 }}><circle cx="9" cy="6" r="4.5" fill="#757575" stroke="#424242" strokeWidth="1.5" /></svg>
-          <span>Tiang Existing</span>
+          <span>Tiang TM Existing</span>
+        </div>
+        <div className="gis-legend-item">
+          <svg width="18" height="12" style={{ marginRight: 8 }}><circle cx="9" cy="6" r="4.5" fill="#7C3AED" stroke="#5B21B6" strokeWidth="1.5" /></svg>
+          <span>Tiang TR Existing</span>
         </div>
         <div className="gis-legend-item">
           <svg width="18" height="14" style={{ marginRight: 8 }}>
@@ -1238,12 +1305,37 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
         </div>
 
         {/* Dynamic Legend items for Overlays (Matching mobile app) */}
-        {overlayLayers.some((o) => o.visible && (o.type === 'jtm' || o.data?.polylines?.length > 0)) && (
+        {overlayLayers.some((o) => o.visible && (o.type === 'jtm' || (o.data?.polylines?.length > 0 && o.type !== 'jtr'))) && (
           <div className="gis-legend-item">
             <svg width="24" height="6" style={{ marginRight: 8 }}>
               <line x1="0" y1="3" x2="24" y2="3" stroke="#FF6600" strokeWidth="3" />
             </svg>
             <span>JTM Eksisting</span>
+          </div>
+        )}
+        {overlayLayers.some((o) => o.visible && (o.type === 'jtr' || /jtr|sutr|sktr/i.test(o.name) || o.data?.polylines?.some((pl) => /jtr|sutr|sktr/i.test(pl.name)))) && (
+          <div className="gis-legend-item">
+            <svg width="24" height="6" style={{ marginRight: 8 }}>
+              <line x1="0" y1="3" x2="24" y2="3" stroke="#FF6600" strokeWidth="3.2" />
+            </svg>
+            <span style={{ color: '#fed7aa', fontWeight: 600 }}>Jalur JTR Eksisting</span>
+          </div>
+        )}
+        {overlayLayers.some(
+          (o) =>
+            o.visible &&
+            (o.type === 'jtr' ||
+              o.data?.points?.some(
+                (p) =>
+                  /tiang.*tr|jtr|sutr|sktr|^tr/i.test(p.name) ||
+                  /tr|sutr|sktr/i.test(p.properties['JENIS'] || '')
+              ))
+        ) && (
+          <div className="gis-legend-item">
+            <svg width="18" height="12" style={{ marginRight: 8 }}>
+              <circle cx="9" cy="6" r="4.5" fill="#7C3AED" stroke="white" strokeWidth="1.5" />
+            </svg>
+            <span style={{ color: '#e9d5ff', fontWeight: 600 }}>Titik Tiang TR Eksisting</span>
           </div>
         )}
         {overlayLayers.some(
