@@ -24,6 +24,7 @@ import { AboutModal } from './components/Modals/AboutModal';
 import { OverlayManagerModal } from './components/Modals/OverlayManagerModal';
 import { overlayStorage } from './services/overlayStorage';
 import { OverlayFile } from './types/overlayTypes';
+import { cloudGisService } from './services/cloudGisService';
 import { generateNextBranchCode, getBranchModeBannerLabel } from './utils/branchUtils';
 import { calculateDistance } from './utils/geoUtils';
 import { Layers, UploadCloud, Trash2, Menu, ChevronRight, BarChart2, Edit3, Undo2, Redo2, Bell, X } from 'lucide-react';
@@ -426,6 +427,39 @@ export function App() {
     const updated = overlays.map((o) => (o.id === updatedOverlay.id ? updatedOverlay : o));
     setOverlays(updated);
     await overlayStorage.updateOverlay(updatedOverlay);
+  };
+
+  const handleZoomToBounds = (bounds: [[number, number], [number, number]]) => {
+    if (leafletMap) {
+      try {
+        leafletMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 });
+      } catch (e) {
+        console.warn('fitBounds error:', e);
+      }
+    }
+  };
+
+  const handleLoadCloudJtr = async (garduId: string, garduNama?: string) => {
+    try {
+      const overlay = await cloudGisService.fetchJtr(garduId, garduNama);
+      const existsIdx = overlays.findIndex((o) => o.id === overlay.id);
+      let updated: OverlayFile[];
+      if (existsIdx >= 0) {
+        updated = [...overlays];
+        updated[existsIdx] = overlay;
+      } else {
+        updated = [...overlays, overlay];
+      }
+      setOverlays(updated);
+      await overlayStorage.saveOverlay(overlay);
+
+      const bounds = cloudGisService.calculateBounds(overlay);
+      if (bounds && leafletMap) {
+        leafletMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 });
+      }
+    } catch (err: any) {
+      alert(`Gagal memuat JTR: ${err.message}`);
+    }
   };
 
   // Two-Way Sync with Supabase Cloud (Upload Local + Download Cloud)
@@ -1591,6 +1625,7 @@ export function App() {
               layerVisibility={layerVisibility}
               overlayLayers={overlays}
               onMapReady={setLeafletMap}
+              onLoadCloudJtr={handleLoadCloudJtr}
             />
           </ErrorBoundary>
         </div>
@@ -2093,12 +2128,13 @@ export function App() {
         onClose={() => setShowAboutModal(false)}
       />
 
-      {/* Overlay Manager Modal (Data Eksisting KML / KMZ / CSV - Mobile MASIV Standard) */}
+      {/* Overlay Manager Modal (Data Eksisting Cloud GIS & KML / KMZ / CSV) */}
       <OverlayManagerModal
         visible={showImportModal}
         onClose={() => setShowImportModal(false)}
         overlays={overlays}
         onOverlaysChange={handleOverlaysChange}
+        onZoomToBounds={handleZoomToBounds}
       />
 
       {/* Floating Superadmin Live Notification Toast */}

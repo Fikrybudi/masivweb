@@ -63,4 +63,8 @@ export const overlayStorage = {
     const filtered = all.filter((o) => o.id !== id);
     await set(STORAGE_KEY, filtered);
   },
+
+  async clearAllOverlays(): Promise<void> {
+    await set(STORAGE_KEY, []);
+  },
 };

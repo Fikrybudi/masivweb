@@ -41,4 +41,6 @@ Thumbs.db
 # TypeScript & Cache
 *.tsbuildinfo
 .eslintcache
-.tempmediaStorage
+*.tempmediaStorage
+existing/
+*.zip

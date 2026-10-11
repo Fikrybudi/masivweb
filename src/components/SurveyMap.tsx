@@ -114,6 +114,7 @@ interface SurveyMapProps {
   layerVisibility?: LayerVisibilityState;
   overlayLayers?: OverlayFile[];
   onMapReady?: (map: L.Map) => void;
+  onLoadCloudJtr?: (garduId: string, garduNama?: string) => void;
 }
 
 function MapReadyHandler({ onMapReady }: { onMapReady?: (map: L.Map) => void }) {
@@ -183,6 +184,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
   },
   overlayLayers = [],
   onMapReady,
+  onLoadCloudJtr,
 }) => {
   const defaultCenter: [number, number] = [-6.2088, 106.8456];
   const [center, setCenter] = useState<[number, number]>(defaultCenter);
@@ -1018,10 +1020,14 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                   !isObservation &&
                   (pt.properties['CLASSIFICATION']?.includes('GD') ||
                     pt.properties['TYPE_GARDU'] === 'GD' ||
+                    pt.properties['tipe'] === 'GARDU' ||
+                    pt.properties['jenis'] === 'GARDU_DISTRIBUSI' ||
                     pt.name.match(/^[A-Za-z]{2,4}\d{3}[A-Za-z]?$/));
 
                 const isProteksiPoint =
                   ol.type === 'proteksi' ||
+                  pt.properties['tipe'] === 'PROTEKSI' ||
+                  pt.properties['jenis'] === 'PROTEKSI' ||
                   /lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.name) ||
                   /lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.properties['JENIS'] || pt.properties['jenis'] || '') ||
                   /lbs|gh|pmr|sso|recloser|fuse|cutout|fco|proteksi/i.test(pt.properties['TYPE'] || pt.properties['type'] || '');
@@ -1080,9 +1086,17 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                 }
 
                 if (isGarduPoint) {
-                  const desc = pt.properties['DESCRIPTION'] || pt.properties['ex_description'];
+                  const desc = pt.properties['DESCRIPTION'] || pt.properties['description'] || pt.properties['ex_description'];
                   const alamat = pt.properties['ALAMAT'] || pt.properties['alamat'];
-                  const jenisPel = pt.properties['JENIS_PEL'];
+                  const jenisPel = pt.properties['JENIS_PEL'] || pt.properties['subclass'];
+                  const penyulang = pt.properties['PENYULANG'] || pt.properties['penyulang'];
+                  const ulp = pt.properties['ULP'] || pt.properties['ulp'];
+                  const thBuat = pt.properties['th_buat'] || pt.properties['TH_BUAT'];
+                  const cleanGarduId =
+                    pt.properties['kode_gis'] ||
+                    pt.properties['gardu'] ||
+                    (desc && desc.startsWith('GD ') ? desc.replace(/^GD\s*/i, '').trim() : '') ||
+                    pt.name.replace(/^GD\s*/i, '').trim();
 
                   const garduMarkerIcon = new L.DivIcon({
                     className: `overlay-gardu overlay-${ol.id}`,
@@ -1102,12 +1116,41 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                     <React.Fragment key={`ovl-gd-${ol.id}-${ptIdx}`}>
                       <Marker position={[pt.lat, pt.lng]} icon={garduMarkerIcon}>
                         <Popup>
-                          <div style={{ padding: '4px', fontSize: '13px' }}>
+                          <div style={{ padding: '6px', fontSize: '13px', minWidth: '190px' }}>
                             <b style={{ color: '#1a73e8', fontSize: '14px' }}>{pt.name}</b>
-                            {desc && <div style={{ fontSize: '12px', marginTop: '2px' }}><b>Kode:</b> {desc}</div>}
-                            {jenisPel && <div style={{ fontSize: '12px' }}><b>Jenis:</b> {jenisPel}</div>}
-                            {alamat && <div style={{ fontSize: '11.5px', color: '#64748b' }}>{alamat}</div>}
-                            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}><i>Layer: {ol.name}</i></div>
+                            {desc && <div style={{ fontSize: '12px', marginTop: '2px' }}><b>Info:</b> {desc}</div>}
+                            {penyulang && <div style={{ fontSize: '11.5px', marginTop: '2px' }}><b>Penyulang:</b> {penyulang}</div>}
+                            {ulp && <div style={{ fontSize: '11.5px', color: '#64748b' }}><b>ULP:</b> {ulp}</div>}
+                            {thBuat && <div style={{ fontSize: '11.5px', color: '#64748b' }}><b>Th. Buat:</b> {thBuat}</div>}
+                            {jenisPel && <div style={{ fontSize: '11.5px', color: '#64748b' }}><b>Jenis:</b> {jenisPel}</div>}
+                            {alamat && <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>{alamat}</div>}
+                            <div style={{ fontSize: '10.5px', color: '#94a3b8', marginTop: '4px' }}><i>Layer: {ol.name}</i></div>
+
+                            {onLoadCloudJtr && cleanGarduId && (
+                              <button
+                                type="button"
+                                onClick={() => onLoadCloudJtr(cleanGarduId, pt.name)}
+                                style={{
+                                  marginTop: '8px',
+                                  width: '100%',
+                                  padding: '6px 10px',
+                                  background: '#ea580c',
+                                  color: '#ffffff',
+                                  border: 'none',
+                                  borderRadius: '6px',
+                                  fontSize: '11.5px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '5px',
+                                  boxShadow: '0 2px 4px rgba(234, 88, 12, 0.4)',
+                                }}
+                              >
+                                ⚡ Tampilkan JTR Gardu Ini
+                              </button>
+                            )}
                           </div>
                         </Popup>
                       </Marker>
