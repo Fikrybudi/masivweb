@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, ScaleControl, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -81,6 +81,26 @@ const activeClickIcon = new L.DivIcon({
   iconAnchor: [8, 8]
 });
 
+const targetPinIcon = new L.DivIcon({
+  className: 'custom-target-pin',
+  html: `
+    <div style="position:relative;width:34px;height:42px;display:flex;align-items:center;justify-content:center;">
+      <div style="position:absolute;bottom:0;width:14px;height:6px;background:rgba(0,0,0,0.35);border-radius:50%;filter:blur(2px);"></div>
+      <div style="position:absolute;top:0;">
+        <svg width="34" height="40" viewBox="0 0 24 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 0C5.37258 0 0 5.37258 0 12C0 19.5 12 28 12 28C12 28 24 19.5 24 12C24 5.37258 18.6274 0 12 0Z" fill="#EF4444"/>
+          <path d="M12 0C5.37258 0 0 5.37258 0 12C0 19.5 12 28 12 28C12 28 24 19.5 24 12C24 5.37258 18.6274 0 12 0Z" stroke="#FFFFFF" stroke-width="2"/>
+          <circle cx="12" cy="11" r="5" fill="#FFFFFF"/>
+          <circle cx="12" cy="11" r="2.5" fill="#EF4444"/>
+        </svg>
+      </div>
+    </div>
+  `,
+  iconSize: [34, 42],
+  iconAnchor: [17, 40],
+  popupAnchor: [0, -36],
+});
+
 const OVERLAY_FEEDER_COLORS = [
   '#FF6600', '#CC00FF', '#009900', '#0066FF', '#FF0066', '#00CCCC',
   '#996633', '#FF3333', '#6600CC', '#339966', '#CC6600', '#3366FF'
@@ -115,6 +135,10 @@ interface SurveyMapProps {
   overlayLayers?: OverlayFile[];
   onMapReady?: (map: L.Map) => void;
   onLoadCloudJtr?: (garduId: string, garduNama?: string) => void;
+  targetPin?: { coordinate: Coordinate; label?: string } | null;
+  onClearTargetPin?: () => void;
+  onAddTiangAtCoord?: (coord: Coordinate) => void;
+  onAddGarduAtCoord?: (coord: Coordinate) => void;
 }
 
 function MapReadyHandler({ onMapReady }: { onMapReady?: (map: L.Map) => void }) {
@@ -133,6 +157,70 @@ function MapUpdater({ center }: { center: [number, number] }) {
     map.setView(center, map.getZoom());
   }, [center, map]);
   return null;
+}
+
+// Quick Recenter / Focus All Assets Control Button (🎯)
+function RecenterControl({ survey }: { survey: Survey | null }) {
+  const map = useMap();
+  const handleRecenter = () => {
+    if (!survey) return;
+    const coords: [number, number][] = [];
+    (survey.tiangList || []).forEach((t) => {
+      if (t?.koordinat && typeof t.koordinat.latitude === 'number' && !isNaN(t.koordinat.latitude)) {
+        coords.push([t.koordinat.latitude, t.koordinat.longitude]);
+      }
+    });
+    (survey.garduList || []).forEach((g) => {
+      if (g?.koordinat && typeof g.koordinat.latitude === 'number' && !isNaN(g.koordinat.latitude)) {
+        coords.push([g.koordinat.latitude, g.koordinat.longitude]);
+      }
+    });
+    (survey.jalurList || []).forEach((j) => {
+      (j?.koordinat || []).forEach((c) => {
+        if (c && typeof c.latitude === 'number' && !isNaN(c.latitude)) {
+          coords.push([c.latitude, c.longitude]);
+        }
+      });
+    });
+
+    if (coords.length === 1) {
+      map.flyTo(coords[0], 18, { duration: 1 });
+    } else if (coords.length > 1) {
+      map.fitBounds(coords, { padding: [50, 50], maxZoom: 19 });
+    }
+  };
+
+  const hasItems = survey && ((survey.tiangList?.length || 0) > 0 || (survey.garduList?.length || 0) > 0);
+  if (!hasItems) return null;
+
+  return (
+    <div className="leaflet-top leaflet-left" style={{ marginTop: '75px', pointerEvents: 'auto' }}>
+      <div className="leaflet-bar leaflet-control">
+        <a
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            handleRecenter();
+          }}
+          title="Fokus ke Seluruh Aset Survey (Pusatkan)"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '30px',
+            height: '30px',
+            background: 'white',
+            color: '#1565C0',
+            fontSize: '15px',
+            textDecoration: 'none',
+            cursor: 'pointer',
+          }}
+        >
+          🎯
+        </a>
+      </div>
+    </div>
+  );
 }
 
 function MapEventsHandler({
@@ -185,6 +273,10 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
   overlayLayers = [],
   onMapReady,
   onLoadCloudJtr,
+  targetPin,
+  onClearTargetPin,
+  onAddTiangAtCoord,
+  onAddGarduAtCoord,
 }) => {
   const defaultCenter: [number, number] = [-6.2088, 106.8456];
   const [center, setCenter] = useState<[number, number]>(defaultCenter);
@@ -192,13 +284,33 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
   const [activeSegmentIndex, setActiveSegmentIndex] = useState<number>(0);
   const [hoveredTiangId, setHoveredTiangId] = useState<string | null>(null);
 
+  // Prevent map viewport from jumping back to titik awal when pinning or modifying tiangs
+  const lastSurveyIdRef = useRef<string | null>(null);
+  const hasCenteredRef = useRef<boolean>(false);
+
   useEffect(() => {
+    if (!survey) {
+      lastSurveyIdRef.current = null;
+      hasCenteredRef.current = false;
+      return;
+    }
+
+    // Reset centering flag when switching to a different survey
+    if (survey.id !== lastSurveyIdRef.current) {
+      lastSurveyIdRef.current = survey.id;
+      hasCenteredRef.current = false;
+    }
+
+    // If already centered on this survey, NEVER jump back to starting point on data updates
+    if (hasCenteredRef.current) return;
+
     if (survey?.tiangList && survey.tiangList.length > 0) {
       const first = survey.tiangList.find(
         (t) => t?.koordinat && typeof t.koordinat.latitude === 'number' && typeof t.koordinat.longitude === 'number' && !isNaN(t.koordinat.latitude) && !isNaN(t.koordinat.longitude)
       );
       if (first?.koordinat) {
         setCenter([first.koordinat.latitude, first.koordinat.longitude]);
+        hasCenteredRef.current = true;
         return;
       }
     }
@@ -208,6 +320,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
       );
       if (first?.koordinat) {
         setCenter([first.koordinat.latitude, first.koordinat.longitude]);
+        hasCenteredRef.current = true;
         return;
       }
     }
@@ -217,6 +330,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
       );
       if (first?.koordinat?.[0]) {
         setCenter([first.koordinat[0].latitude, first.koordinat[0].longitude]);
+        hasCenteredRef.current = true;
         return;
       }
     }
@@ -344,6 +458,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
       >
         <MapReadyHandler onMapReady={onMapReady} />
         <MapUpdater center={center} />
+        <RecenterControl survey={survey} />
         <MapEventsHandler
           onMapClick={onMapClick}
           onMouseMove={(c) => {
@@ -1279,6 +1394,90 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
             </React.Fragment>
           );
         })}
+
+        {/* Target Pin Marker (from GotoCoordinateModal) */}
+        {targetPin && targetPin.coordinate && typeof targetPin.coordinate.latitude === 'number' && typeof targetPin.coordinate.longitude === 'number' && (
+          <Marker
+            position={[targetPin.coordinate.latitude, targetPin.coordinate.longitude]}
+            icon={targetPinIcon}
+          >
+            <Popup minWidth={220}>
+              <div style={{ padding: '4px', fontSize: '12px', color: '#0f172a' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', fontWeight: 700, color: '#dc2626' }}>
+                  <span>📍</span>
+                  <span>{targetPin.label || 'Koordinat Target'}</span>
+                </div>
+                <div style={{ background: '#f1f5f9', padding: '6px 8px', borderRadius: '4px', fontFamily: 'monospace', fontSize: '11px', marginBottom: '8px', border: '1px solid #cbd5e1' }}>
+                  <div><b>Lat:</b> {targetPin.coordinate.latitude.toFixed(7)}</div>
+                  <div><b>Lng:</b> {targetPin.coordinate.longitude.toFixed(7)}</div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  {onAddTiangAtCoord && (
+                    <button
+                      type="button"
+                      onClick={() => onAddTiangAtCoord(targetPin.coordinate)}
+                      style={{
+                        padding: '5px 10px',
+                        background: '#0284c7',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      ➕ Tambah Tiang di Sini
+                    </button>
+                  )}
+                  {onAddGarduAtCoord && (
+                    <button
+                      type="button"
+                      onClick={() => onAddGarduAtCoord(targetPin.coordinate)}
+                      style={{
+                        padding: '5px 10px',
+                        background: '#f97316',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      ⚡ Tambah Gardu di Sini
+                    </button>
+                  )}
+                  {onClearTargetPin && (
+                    <button
+                      type="button"
+                      onClick={onClearTargetPin}
+                      style={{
+                        padding: '4px 8px',
+                        background: '#f8fafc',
+                        color: '#64748b',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '11px',
+                      }}
+                    >
+                      Hapus Pin Target
+                    </button>
+                  )}
+                </div>
+              </div>
+            </Popup>
+          </Marker>
+        )}
       </MapContainer>
 
       {/* Floating Map Type Switcher (Top-Right, below header) */}

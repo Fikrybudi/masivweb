@@ -30,6 +30,8 @@ import {
   Radio,
 } from 'lucide-react';
 import { OverlayFile, OverlayDataType } from '../../types/overlayTypes';
+import { Coordinate } from '../../types';
+import { calculateDistance } from '../../utils/geoUtils';
 import { parseOverlayFile, detectOverlayType } from '../../services/overlayParser';
 import { overlayStorage } from '../../services/overlayStorage';
 import {
@@ -78,6 +80,7 @@ interface OverlayManagerModalProps {
   overlays: OverlayFile[];
   onOverlaysChange: (overlays: OverlayFile[]) => void;
   onZoomToBounds?: (bounds: [[number, number], [number, number]]) => void;
+  currentLocation?: Coordinate | null;
 }
 
 export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
@@ -86,6 +89,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
   overlays,
   onOverlaysChange,
   onZoomToBounds,
+  currentLocation,
 }) => {
   // Tab Switcher
   const [activeTab, setActiveTab] = useState<'cloud' | 'local'>('cloud');
@@ -108,6 +112,10 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
   const [selectedPenyulangId, setSelectedPenyulangId] = useState<string>('');
   const [garduSearch, setGarduSearch] = useState<string>('');
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+
+  // Background cached list of gardu for the selected penyulang (new format support)
+  const [penyulangGarduList, setPenyulangGarduList] = useState<CloudGardu[]>([]);
+  const [loadingGarduList, setLoadingGarduList] = useState<boolean>(false);
 
   const [showUrlConfig, setShowUrlConfig] = useState(false);
   const [customUrlInput, setCustomUrlInput] = useState('');
@@ -165,7 +173,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
   const filteredPenyulang = useMemo(() => {
     if (!catalog) return [];
     if (selectedUlp === 'ALL') return catalog.penyulang;
-    return catalog.penyulang.filter((p) => p.ulp.toUpperCase() === selectedUlp.toUpperCase());
+    return catalog.penyulang.filter((p) => p.ulp && p.ulp.toUpperCase() === selectedUlp.toUpperCase());
   }, [catalog, selectedUlp]);
 
   // Keep selected penyulang valid when ULP changes
@@ -180,27 +188,166 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
     }
   }, [filteredPenyulang, selectedPenyulangId]);
 
-  // Filtered Gardu list for search
+  // Selected Penyulang Object
+  const selectedPenyulang = useMemo(() => {
+    if (!catalog || !selectedPenyulangId) return null;
+    return catalog.penyulang.find((p) => p.id === selectedPenyulangId) || null;
+  }, [catalog, selectedPenyulangId]);
+
+  // Safe helper for total gardu count
+  const totalGarduCount = useMemo(() => {
+    if (!catalog) return 0;
+    if (catalog.statistik?.n_gardu) return catalog.statistik.n_gardu;
+    if (Array.isArray(catalog.gardu)) return catalog.gardu.length;
+    return catalog.penyulang.reduce((sum, p) => sum + (p.n_gardu || 0), 0);
+  }, [catalog]);
+
+  const getGarduCountForUlp = (u: string) => {
+    if (!catalog) return 0;
+    if (Array.isArray(catalog.gardu)) {
+      return catalog.gardu.filter((g) => g.ulp && g.ulp.toUpperCase() === u.toUpperCase()).length;
+    }
+    return catalog.penyulang
+      .filter((p) => p.ulp && p.ulp.toUpperCase() === u.toUpperCase())
+      .reduce((sum, p) => sum + (p.n_gardu || 0), 0);
+  };
+
+  const getPenyulangCountForUlp = (u: string) => {
+    if (!catalog) return 0;
+    return catalog.penyulang.filter((p) => p.ulp && p.ulp.toUpperCase() === u.toUpperCase()).length;
+  };
+
+  const getPenyulangFileKey = (p: CloudPenyulang) => {
+    const raw = p.jtm || p.file || p.id;
+    return raw.replace(/^jtm\//, '').replace('.geojson', '').toLowerCase().replace(/[^a-z0-9]/g, '_');
+  };
+
+  // Auto load gardu list for selected penyulang (supports new Sep 2026 format)
+  useEffect(() => {
+    if (!catalog || Array.isArray(catalog.gardu) || !selectedPenyulangId) return;
+
+    let cancelled = false;
+    const pObj = catalog.penyulang.find((p) => p.id === selectedPenyulangId);
+    if (!pObj || (!pObj.gardu && !pObj.n_gardu)) {
+      setPenyulangGarduList([]);
+      return;
+    }
+
+    setLoadingGarduList(true);
+    const fileName = cloudGisService.resolveFileName(pObj.gardu || pObj.id, 'gardu');
+    const baseUrl = cloudGisService.getBaseUrl();
+
+    fetch(`${baseUrl}/gardu/${encodeURIComponent(fileName)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        if (data && Array.isArray(data.features)) {
+          const list: CloudGardu[] = data.features.map((f: any) => ({
+            id: f.properties?.name || f.properties?.gardu || '',
+            nama: f.properties?.description || f.properties?.nama || f.properties?.name || '',
+            penyulang: f.properties?.penyulang || pObj.nama,
+            ulp: f.properties?.ulp || pObj.ulp,
+            lat: f.geometry?.coordinates?.[1] || 0,
+            lng: f.geometry?.coordinates?.[0] || 0,
+            kode_gis: f.properties?.location || '',
+            ada_jtr: true,
+          }));
+          setPenyulangGarduList(list);
+        } else {
+          setPenyulangGarduList([]);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('Failed loading gardu list for penyulang:', err);
+          setPenyulangGarduList([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingGarduList(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [catalog, selectedPenyulangId]);
+
+  // Helper to format distance nicely (e.g., "150 m" or "2.4 km")
+  const formatDistance = (meters?: number): string => {
+    if (meters === undefined || !isFinite(meters)) return '';
+    if (meters < 1000) {
+      return `${Math.round(meters)} m`;
+    }
+    return `${(meters / 1000).toFixed(1)} km`;
+  };
+
+  // Auto-detect and select closest Penyulang based on currentLocation when opening modal
+  useEffect(() => {
+    if (!catalog || !currentLocation || !catalog.penyulang || catalog.penyulang.length === 0) return;
+
+    let closestP = catalog.penyulang[0];
+    let minD = Infinity;
+
+    for (const p of catalog.penyulang) {
+      if (Array.isArray(p.bbox) && p.bbox.length === 4) {
+        const cLat = (p.bbox[1] + p.bbox[3]) / 2;
+        const cLng = (p.bbox[0] + p.bbox[2]) / 2;
+        const d = calculateDistance(currentLocation, { latitude: cLat, longitude: cLng });
+        if (d < minD) {
+          minD = d;
+          closestP = p;
+        }
+      }
+    }
+
+    if (closestP && (!selectedPenyulangId || selectedPenyulangId === catalog.penyulang[0].id)) {
+      setSelectedPenyulangId(closestP.id);
+      if (closestP.ulp) {
+        setSelectedUlp(closestP.ulp);
+      }
+    }
+  }, [catalog, currentLocation]);
+
+  // Combined gardu source (either legacy flat catalog.gardu or loaded per-penyulang)
+  const effectiveGarduList = useMemo(() => {
+    if (catalog && Array.isArray(catalog.gardu)) {
+      return catalog.gardu;
+    }
+    return penyulangGarduList;
+  }, [catalog, penyulangGarduList]);
+
+  // Filtered & Distance-ranked Gardu list for search
   const filteredGardu = useMemo(() => {
-    if (!catalog) return [];
-    let list = catalog.gardu;
-    if (selectedUlp !== 'ALL') {
-      list = list.filter((g) => g.ulp.toUpperCase() === selectedUlp.toUpperCase());
+    let list = effectiveGarduList;
+    if (catalog && Array.isArray(catalog.gardu) && selectedUlp !== 'ALL') {
+      list = list.filter((g) => g.ulp && g.ulp.toUpperCase() === selectedUlp.toUpperCase());
     }
     const q = garduSearch.trim().toLowerCase();
-    if (!q) {
-      // Show first 20 items if no search query
-      return list.slice(0, 20);
-    }
-    return list
-      .filter(
+    if (q) {
+      list = list.filter(
         (g) =>
-          g.id.toLowerCase().includes(q) ||
-          g.nama.toLowerCase().includes(q) ||
-          g.penyulang.toLowerCase().includes(q)
-      )
-      .slice(0, 50); // limit to 50 for performance
-  }, [catalog, selectedUlp, garduSearch]);
+          (g.id && g.id.toLowerCase().includes(q)) ||
+          (g.nama && g.nama.toLowerCase().includes(q)) ||
+          (g.penyulang && g.penyulang.toLowerCase().includes(q))
+      );
+    }
+
+    // If currentLocation is available, rank gardu by closest distance
+    if (currentLocation && typeof currentLocation.latitude === 'number' && typeof currentLocation.longitude === 'number') {
+      const withDist: CloudGardu[] = list.map((g) => {
+        let dist = Infinity;
+        if (typeof g.lat === 'number' && typeof g.lng === 'number' && !isNaN(g.lat) && !isNaN(g.lng)) {
+          dist = calculateDistance(currentLocation, { latitude: g.lat, longitude: g.lng });
+        }
+        return { ...g, distance: dist };
+      });
+
+      withDist.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+      return withDist.slice(0, 50);
+    }
+
+    return list.slice(0, 50);
+  }, [effectiveGarduList, catalog, selectedUlp, garduSearch, currentLocation]);
 
   // --- CLOUD GIS ACTIONS ---
 
@@ -212,9 +359,8 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
     const actionKey = `jtm-${pObj.id}`;
     setLoadingAction(actionKey);
     try {
-      const overlay = await cloudGisService.fetchJtm(pObj.file, pObj.nama);
+      const overlay = await cloudGisService.fetchJtm(pObj.jtm || pObj.file || pObj.id, pObj.nama);
 
-      // Check if already in overlays, replace or add
       const existsIdx = overlays.findIndex((o) => o.id === overlay.id);
       let updated: OverlayFile[];
       if (existsIdx >= 0) {
@@ -227,7 +373,6 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
       onOverlaysChange(updated);
       await overlayStorage.saveOverlay(overlay);
 
-      // Zoom to bounds if available
       const bounds = cloudGisService.calculateBounds(overlay);
       if (bounds && onZoomToBounds) {
         onZoomToBounds(bounds);
@@ -236,6 +381,115 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
       showNotice(`✅ ${overlay.name} (${overlay.data.polylines.length} segmen) berhasil dimuat!`);
     } catch (err: any) {
       alert(`Gagal memuat JTM: ${err.message}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleLoadGarduPenyulang = async (penyulang?: CloudPenyulang) => {
+    const pObj = penyulang || (catalog ? catalog.penyulang.find((x) => x.id === selectedPenyulangId) : null);
+    if (!pObj) return;
+
+    const actionKey = `gardu-${pObj.id}`;
+    setLoadingAction(actionKey);
+    try {
+      const overlay = await cloudGisService.fetchGarduPenyulang(pObj.gardu || pObj.id, pObj.nama);
+      const existsIdx = overlays.findIndex((o) => o.id === overlay.id);
+      let updated: OverlayFile[];
+      if (existsIdx >= 0) {
+        updated = [...overlays];
+        updated[existsIdx] = overlay;
+      } else {
+        updated = [...overlays, overlay];
+      }
+
+      onOverlaysChange(updated);
+      await overlayStorage.saveOverlay(overlay);
+
+      const bounds = cloudGisService.calculateBounds(overlay);
+      if (bounds && onZoomToBounds) {
+        onZoomToBounds(bounds);
+      }
+
+      showNotice(`✅ ${overlay.name} (${overlay.data.points.length} gardu) berhasil dimuat!`);
+    } catch (err: any) {
+      alert(`Gagal memuat Gardu: ${err.message}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleLoadProteksiPenyulang = async (penyulang?: CloudPenyulang) => {
+    const pObj = penyulang || (catalog ? catalog.penyulang.find((x) => x.id === selectedPenyulangId) : null);
+    if (!pObj) return;
+
+    const actionKey = `pro-${pObj.id}`;
+    setLoadingAction(actionKey);
+    try {
+      const overlay = await cloudGisService.fetchProteksiPenyulang(pObj.proteksi || pObj.id, pObj.nama);
+      const existsIdx = overlays.findIndex((o) => o.id === overlay.id);
+      let updated: OverlayFile[];
+      if (existsIdx >= 0) {
+        updated = [...overlays];
+        updated[existsIdx] = overlay;
+      } else {
+        updated = [...overlays, overlay];
+      }
+
+      onOverlaysChange(updated);
+      await overlayStorage.saveOverlay(overlay);
+
+      const bounds = cloudGisService.calculateBounds(overlay);
+      if (bounds && onZoomToBounds) {
+        onZoomToBounds(bounds);
+      }
+
+      showNotice(`✅ ${overlay.name} (${overlay.data.points.length} titik proteksi) berhasil dimuat!`);
+    } catch (err: any) {
+      alert(`Gagal memuat Proteksi: ${err.message}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleLoadAllPenyulang = async (penyulang?: CloudPenyulang) => {
+    const pObj = penyulang || (catalog ? catalog.penyulang.find((x) => x.id === selectedPenyulangId) : null);
+    if (!pObj) return;
+
+    const actionKey = `all-${pObj.id}`;
+    setLoadingAction(actionKey);
+    try {
+      const promises: Promise<OverlayFile>[] = [];
+      if (pObj.jtm || pObj.file || pObj.n_jtm) {
+        promises.push(cloudGisService.fetchJtm(pObj.jtm || pObj.file || pObj.id, pObj.nama));
+      }
+      if (pObj.gardu || pObj.n_gardu) {
+        promises.push(cloudGisService.fetchGarduPenyulang(pObj.gardu || pObj.id, pObj.nama));
+      }
+      if (pObj.proteksi || pObj.n_proteksi) {
+        promises.push(cloudGisService.fetchProteksiPenyulang(pObj.proteksi || pObj.id, pObj.nama));
+      }
+
+      const results = await Promise.all(promises);
+      let updated = [...overlays];
+      for (const ovl of results) {
+        const idx = updated.findIndex((o) => o.id === ovl.id);
+        if (idx >= 0) updated[idx] = ovl;
+        else updated.push(ovl);
+        await overlayStorage.saveOverlay(ovl);
+      }
+      onOverlaysChange(updated);
+
+      if (results[0]) {
+        const bounds = cloudGisService.calculateBounds(results[0]);
+        if (bounds && onZoomToBounds) {
+          onZoomToBounds(bounds);
+        }
+      }
+
+      showNotice(`✅ Seluruh layer penyulang ${pObj.nama} berhasil dimuat!`);
+    } catch (err: any) {
+      alert(`Gagal memuat layer penyulang: ${err.message}`);
     } finally {
       setLoadingAction(null);
     }
@@ -280,7 +534,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
     const actionKey = `gardu-${ulp}`;
     setLoadingAction(actionKey);
     try {
-      const overlay = await cloudGisService.fetchGardu(ulp);
+      const overlay = await cloudGisService.fetchGardu(ulp, catalog);
 
       const existsIdx = overlays.findIndex((o) => o.id === overlay.id);
       let updated: OverlayFile[];
@@ -312,7 +566,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
     const actionKey = `pro-${targetUlp}`;
     setLoadingAction(actionKey);
     try {
-      const overlay = await cloudGisService.fetchProteksi(targetUlp);
+      const overlay = await cloudGisService.fetchProteksi(targetUlp, catalog);
 
       const existsIdx = overlays.findIndex((o) => o.id === overlay.id);
       let updated: OverlayFile[];
@@ -693,7 +947,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                         <span style={{ color: '#38bdf8' }}>
                           {catalog.statistik
                             ? `${catalog.statistik.n_gardu.toLocaleString()} Gardu · ${catalog.statistik.n_penyulang} Penyulang · ${catalog.ulp.length} ULP`
-                            : '5.339 Gardu · 68 Penyulang'}
+                            : `${totalGarduCount.toLocaleString()} Gardu · ${catalog.penyulang.length} Penyulang`}
                         </span>
                       </span>
                     ) : (
@@ -855,10 +1109,11 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                         cursor: 'pointer',
                       }}
                     >
-                      Semua ULP ({catalog.gardu.length})
+                      Semua ULP ({totalGarduCount.toLocaleString()} Gardu · {catalog.penyulang.length} Pyl)
                     </button>
                     {catalog.ulp.map((u) => {
-                      const count = catalog.gardu.filter((g) => g.ulp.toUpperCase() === u.toUpperCase()).length;
+                      const count = getGarduCountForUlp(u);
+                      const pylCount = getPenyulangCountForUlp(u);
                       const isSel = selectedUlp.toUpperCase() === u.toUpperCase();
                       return (
                         <button
@@ -875,7 +1130,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                             cursor: 'pointer',
                           }}
                         >
-                          {u} ({count})
+                          {u} ({count > 0 ? `${count} GD · ` : ''}{pylCount} Pyl)
                         </button>
                       );
                     })}
@@ -883,7 +1138,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                 </div>
               )}
 
-              {/* SECTION A: JTM (PENYULANG 20 kV) */}
+              {/* SECTION A: DATA PER PENYULANG (JTM, GARDU, PROTEKSI) */}
               {catalog && (
                 <div
                   style={{
@@ -905,7 +1160,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <Radio size={16} color="#38bdf8" />
                       <span style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc' }}>
-                        JTM 20 kV (Per Penyulang)
+                        Data Eksisting Per Penyulang
                       </span>
                     </div>
                     <span style={{ fontSize: '11px', color: '#94a3b8' }}>
@@ -913,63 +1168,147 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                     </span>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  {/* Dropdown Penyulang */}
+                  <div style={{ marginBottom: '12px' }}>
                     <select
                       value={selectedPenyulangId}
                       onChange={(e) => setSelectedPenyulangId(e.target.value)}
                       style={{
-                        flex: 1,
-                        padding: '8px 12px',
+                        width: '100%',
+                        padding: '9px 12px',
                         borderRadius: '6px',
                         background: '#0f172a',
                         border: '1px solid #334155',
                         color: '#f8fafc',
-                        fontSize: '12.5px',
+                        fontSize: '13px',
                         outline: 'none',
                         cursor: 'pointer',
                       }}
                     >
                       {filteredPenyulang.map((p) => {
-                        const isLoaded = overlays.some((o) => o.id === `cloud_jtm_${p.file.replace('.geojson', '').toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
+                        const fileKey = getPenyulangFileKey(p);
+                        const isLoaded = overlays.some((o) => o.id === `cloud_jtm_${fileKey}`);
                         return (
                           <option key={p.id} value={p.id}>
-                            {p.nama} ({p.ulp}) {isLoaded ? '✓ [Aktif]' : ''}
+                            {p.nama} ({p.ulp}) {p.n_jtm ? `— ${p.n_jtm} JTM · ${p.n_gardu || 0} Gardu · ${p.n_proteksi || 0} Proteksi` : ''} {isLoaded ? '✓ [JTM Aktif]' : ''}
                           </option>
                         );
                       })}
                     </select>
-
-                    <button
-                      onClick={handleLoadJtm}
-                      disabled={!selectedPenyulangId || loadingAction?.startsWith('jtm-')}
-                      style={{
-                        padding: '8px 16px',
-                        borderRadius: '6px',
-                        background: '#0284c7',
-                        color: 'white',
-                        border: 'none',
-                        fontSize: '12.5px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {loadingAction?.startsWith('jtm-') ? (
-                        <>
-                          <Loader2 size={14} className="animate-spin" />
-                          <span>Memuat...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Zap size={14} />
-                          <span>Tampilkan JTM</span>
-                        </>
-                      )}
-                    </button>
                   </div>
+
+                  {/* Action buttons for selected Penyulang */}
+                  {selectedPenyulang && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px' }}>
+                      {/* Button 1: JTM */}
+                      <button
+                        onClick={handleLoadJtm}
+                        disabled={loadingAction?.startsWith('jtm-')}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          background: '#0284c7',
+                          color: 'white',
+                          border: 'none',
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        {loadingAction === `jtm-${selectedPenyulang.id}` ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Zap size={13} />
+                        )}
+                        <span>⚡ JTM ({selectedPenyulang.n_jtm || '?'} segmen)</span>
+                      </button>
+
+                      {/* Button 2: Gardu */}
+                      <button
+                        onClick={() => handleLoadGarduPenyulang(selectedPenyulang)}
+                        disabled={loadingAction === `gardu-${selectedPenyulang.id}` || (!selectedPenyulang.gardu && !selectedPenyulang.n_gardu)}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          background: '#334155',
+                          color: '#f8fafc',
+                          border: '1px solid #475569',
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        {loadingAction === `gardu-${selectedPenyulang.id}` ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <MapPin size={13} color="#4285F4" />
+                        )}
+                        <span>🏠 Gardu ({selectedPenyulang.n_gardu || 0})</span>
+                      </button>
+
+                      {/* Button 3: Proteksi */}
+                      <button
+                        onClick={() => handleLoadProteksiPenyulang(selectedPenyulang)}
+                        disabled={loadingAction === `pro-${selectedPenyulang.id}` || (!selectedPenyulang.proteksi && !selectedPenyulang.n_proteksi)}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          background: '#334155',
+                          color: '#f8fafc',
+                          border: '1px solid #475569',
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        {loadingAction === `pro-${selectedPenyulang.id}` ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Shield size={13} color="#e11d48" />
+                        )}
+                        <span>🛡️ Proteksi ({selectedPenyulang.n_proteksi || 0})</span>
+                      </button>
+
+                      {/* Button 4: Muat Semua */}
+                      <button
+                        onClick={() => handleLoadAllPenyulang(selectedPenyulang)}
+                        disabled={loadingAction === `all-${selectedPenyulang.id}`}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          background: '#10b981',
+                          color: 'white',
+                          border: 'none',
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        {loadingAction === `all-${selectedPenyulang.id}` ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Check size={13} />
+                        )}
+                        <span>🚀 Muat Semua</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -997,19 +1336,40 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                       <span style={{ fontSize: '13px', fontWeight: 700, color: '#fb923c' }}>
                         JTR & Tiang TR Eksisting (Per Gardu)
                       </span>
+                      {currentLocation && (
+                        <span
+                          style={{
+                            fontSize: '10px',
+                            background: 'rgba(16, 185, 129, 0.2)',
+                            color: '#34d399',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontWeight: 700,
+                          }}
+                        >
+                          ⭐ Urut Terdekat
+                        </span>
+                      )}
                     </div>
-                    <span
-                      style={{
-                        fontSize: '10px',
-                        background: 'rgba(234, 88, 12, 0.25)',
-                        color: '#fb923c',
-                        padding: '2px 6px',
-                        borderRadius: '4px',
-                        fontWeight: 700,
-                      }}
-                    >
-                      Oren Menyala (#FF6600)
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {loadingGarduList && (
+                        <span style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Loader2 size={11} className="animate-spin" /> Membaca gardu...
+                        </span>
+                      )}
+                      <span
+                        style={{
+                          fontSize: '10px',
+                          background: 'rgba(234, 88, 12, 0.25)',
+                          color: '#fb923c',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {filteredGardu.length} Gardu
+                      </span>
+                    </div>
                   </div>
 
                   {/* Search input for Gardu */}
@@ -1053,7 +1413,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                     )}
                   </div>
 
-                  {/* Gardu list results */}
+                  {/* Gardu list results or fallback */}
                   <div
                     style={{
                       maxHeight: '175px',
@@ -1065,8 +1425,48 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                     }}
                   >
                     {filteredGardu.length === 0 ? (
-                      <div style={{ padding: '16px', textAlign: 'center', color: '#64748b', fontSize: '12px' }}>
-                        Tidak ditemukan gardu dengan kata kunci "{garduSearch}"
+                      <div style={{ padding: '16px', textAlign: 'center', color: '#94a3b8', fontSize: '12px' }}>
+                        {garduSearch.trim() ? (
+                          <div>
+                            <div style={{ marginBottom: '8px', color: '#cbd5e1' }}>
+                              Cari & Muat data JTR untuk Gardu <b>"{garduSearch.trim().toUpperCase()}"</b> dari Cloud:
+                            </div>
+                            <button
+                              onClick={() => handleLoadJtr({
+                                id: garduSearch.trim().toUpperCase(),
+                                nama: `Gardu ${garduSearch.trim().toUpperCase()}`,
+                                penyulang: '',
+                                lat: 0,
+                                lng: 0,
+                                ulp: selectedUlp,
+                                ada_jtr: true,
+                              })}
+                              disabled={loadingAction === `jtr-${garduSearch.trim().toUpperCase()}`}
+                              style={{
+                                padding: '6px 14px',
+                                background: '#ea580c',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '6px',
+                                fontWeight: 600,
+                                fontSize: '11.5px',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                              }}
+                            >
+                              {loadingAction === `jtr-${garduSearch.trim().toUpperCase()}` ? (
+                                <Loader2 size={13} className="animate-spin" />
+                              ) : (
+                                <Zap size={13} />
+                              )}
+                              <span>⚡ Muat JTR {garduSearch.trim().toUpperCase()}</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <span>Ketik kode gardu di atas atau muat titik gardu penyulang, lalu klik tombol <b>"⚡ Tampilkan JTR Gardu Ini"</b> pada pin gardu di peta.</span>
+                        )}
                       </div>
                     ) : (
                       filteredGardu.map((g) => {
@@ -1090,6 +1490,21 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                                 <span style={{ fontWeight: 700, fontSize: '12.5px', color: '#f8fafc' }}>
                                   {g.id}
                                 </span>
+                                {g.distance !== undefined && isFinite(g.distance) && (
+                                  <span
+                                    style={{
+                                      fontSize: '9.5px',
+                                      fontWeight: 700,
+                                      color: g.distance < 2000 ? '#34d399' : g.distance < 5000 ? '#38bdf8' : '#94a3b8',
+                                      background: 'rgba(15, 23, 42, 0.7)',
+                                      border: '1px solid rgba(148, 163, 184, 0.3)',
+                                      padding: '1px 5px',
+                                      borderRadius: '4px',
+                                    }}
+                                  >
+                                    📍 {formatDistance(g.distance)}
+                                  </span>
+                                )}
                                 {g.ada_jtr ? (
                                   <span
                                     style={{
@@ -1128,6 +1543,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                                   textOverflow: 'ellipsis',
                                   whiteSpace: 'nowrap',
                                   marginTop: '2px',
+                                  paddingRight: '6px',
                                 }}
                               >
                                 {g.nama}
@@ -1178,7 +1594,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                 </div>
               )}
 
-              {/* SECTION C: BULK POINTS (TITIK GARDU & PROTEKSI) */}
+              {/* SECTION C: BULK POINTS (TITIK GARDU & PROTEKSI PER ULP) */}
               {catalog && (
                 <div
                   style={{
@@ -1217,7 +1633,7 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                         <MapPin size={13} color="#4285F4" />
                       )}
                       <span>
-                        Titik Gardu ({selectedUlp === 'ALL' ? 'LABUAN' : selectedUlp})
+                        Semua Gardu ({selectedUlp === 'ALL' ? 'LABUAN' : selectedUlp})
                       </span>
                     </button>
 
@@ -1244,7 +1660,9 @@ export const OverlayManagerModal: React.FC<OverlayManagerModalProps> = ({
                       ) : (
                         <Shield size={13} color="#e11d48" />
                       )}
-                      <span>Proteksi & GH (LABUAN)</span>
+                      <span>
+                        Semua Proteksi ({selectedUlp === 'ALL' ? 'LABUAN' : selectedUlp})
+                      </span>
                     </button>
                   </div>
                 </div>

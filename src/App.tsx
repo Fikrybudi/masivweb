@@ -27,9 +27,10 @@ import { OverlayFile } from './types/overlayTypes';
 import { cloudGisService } from './services/cloudGisService';
 import { generateNextBranchCode, getBranchModeBannerLabel } from './utils/branchUtils';
 import { calculateDistance } from './utils/geoUtils';
-import { Layers, UploadCloud, Trash2, Menu, ChevronRight, BarChart2, Edit3, Undo2, Redo2, Bell, X } from 'lucide-react';
+import { Layers, UploadCloud, Trash2, Menu, ChevronRight, BarChart2, Edit3, Undo2, Redo2, Bell, X, Compass } from 'lucide-react';
 import { notificationService, SuperadminNotification } from './services/notificationService';
 import { NotificationModal } from './components/Modals/NotificationModal';
+import { GotoCoordinateModal } from './components/Modals/GotoCoordinateModal';
 
 export function App() {
   // Fast Startup Splash Screen state (matching mobile app App.tsx)
@@ -86,6 +87,8 @@ export function App() {
   const [showAboutModal, setShowAboutModal] = useState<boolean>(false);
   const [showImportModal, setShowImportModal] = useState<boolean>(false);
   const [showPersilModal, setShowPersilModal] = useState<boolean>(false);
+  const [showGotoModal, setShowGotoModal] = useState<boolean>(false);
+  const [targetPin, setTargetPin] = useState<{ coordinate: Coordinate; label?: string } | null>(null);
   const [actionTiang, setActionTiang] = useState<Tiang | null>(null);
   const [editingTiang, setEditingTiang] = useState<Tiang | null>(null);
   const [actionJalur, setActionJalur] = useState<JalurKabel | null>(null);
@@ -168,6 +171,34 @@ export function App() {
     setSurveys(all);
     setSelectedAsset(null);
     setSelectedAssetType(null);
+  };
+
+  const handleNavigateToCoord = (coord: Coordinate, zoom: number, showPin: boolean) => {
+    if (leafletMap) {
+      leafletMap.flyTo([coord.latitude, coord.longitude], zoom, { duration: 1.5 });
+    }
+    if (showPin) {
+      setTargetPin({ coordinate: coord, label: 'Koordinat Target' });
+    }
+  };
+
+  const handleAddTiangAtCoord = (coord: Coordinate) => {
+    if (!activeSurvey) {
+      alert('Silakan buka atau pilih survey aktif terlebih dahulu sebelum menambahkan tiang.');
+      return;
+    }
+    setClickedCoord(coord);
+    setEditingTiang(null);
+    setShowTiangModal(true);
+  };
+
+  const handleAddGarduAtCoord = (coord: Coordinate) => {
+    if (!activeSurvey) {
+      alert('Silakan buka atau pilih survey aktif terlebih dahulu sebelum menambahkan gardu.');
+      return;
+    }
+    setClickedCoord(coord);
+    setShowGarduModal(true);
   };
 
   // Resizable Sidebar & Responsive Mobile Drawer states
@@ -1472,6 +1503,29 @@ export function App() {
               Data Eksisting
             </button>
 
+            <button
+              onClick={() => setShowGotoModal(true)}
+              title="Cari & Lompat ke Titik Koordinat Peta"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                background: '#1e293b',
+                color: '#38bdf8',
+                border: '1px solid #38bdf8',
+                padding: '6px 10px',
+                borderRadius: '6px',
+                fontSize: '11.5px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+              }}
+            >
+              <Compass size={13} />
+              Cari Koordinat
+            </button>
+
             {activeSurvey && (
               <>
                 <button
@@ -1626,6 +1680,10 @@ export function App() {
               overlayLayers={overlays}
               onMapReady={setLeafletMap}
               onLoadCloudJtr={handleLoadCloudJtr}
+              targetPin={targetPin}
+              onClearTargetPin={() => setTargetPin(null)}
+              onAddTiangAtCoord={handleAddTiangAtCoord}
+              onAddGarduAtCoord={handleAddGarduAtCoord}
             />
           </ErrorBoundary>
         </div>
@@ -2135,6 +2193,12 @@ export function App() {
         overlays={overlays}
         onOverlaysChange={handleOverlaysChange}
         onZoomToBounds={handleZoomToBounds}
+        currentLocation={
+          targetPin?.coordinate ||
+          activeSurvey?.tiangList?.[0]?.koordinat ||
+          activeSurvey?.garduList?.[0]?.koordinat ||
+          (leafletMap ? { latitude: leafletMap.getCenter().lat, longitude: leafletMap.getCenter().lng } : null)
+        }
       />
 
       {/* Floating Superadmin Live Notification Toast */}
@@ -2233,6 +2297,18 @@ export function App() {
           setNotifications([]);
         }}
         onSelectSurvey={handleSelectSurveyById}
+      />
+
+      {/* Cari / Lompat ke Koordinat Modal */}
+      <GotoCoordinateModal
+        visible={showGotoModal}
+        onClose={() => setShowGotoModal(false)}
+        onNavigate={handleNavigateToCoord}
+        currentMapCenter={
+          leafletMap
+            ? { latitude: leafletMap.getCenter().lat, longitude: leafletMap.getCenter().lng }
+            : null
+        }
       />
     </div>
 
