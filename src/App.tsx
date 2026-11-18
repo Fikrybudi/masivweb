@@ -62,6 +62,10 @@ export function App() {
   // Move Tiang state
   const [movingTiang, setMovingTiang] = useState<Tiang | null>(null);
 
+  // Active Anchor Pole state (Tiang Acuan untuk garis bantu & percabangan)
+  // undefined = default (tiang terakhir), null = lepas (jalur baru), string = id tiang tertentu
+  const [activeAnchorTiangId, setActiveAnchorTiangId] = useState<string | null | undefined>(undefined);
+
   // Modals Visibility
   const [showBASurveyModal, setShowBASurveyModal] = useState<boolean>(false);
   const [editingSurvey, setEditingSurvey] = useState<Survey | null>(null);
@@ -689,6 +693,12 @@ export function App() {
       return;
     }
 
+    if (toolMode === 'add-tiang') {
+      // Ganti tiang acuan aktif saat klik tiang di mode pasang tiang
+      setActiveAnchorTiangId(tiang.id);
+      return;
+    }
+
     if (toolMode === 'none') {
       setActionTiang(tiang);
     }
@@ -1033,41 +1043,33 @@ export function App() {
       return;
     }
 
-    // New tiang (Check if in Branching mode)
-    let autoKode = data.kodeTiang;
-    let branchProps: Partial<Tiang> = {};
-
-    if (activeBranchParent && activeBranchDirection) {
-      const res = generateNextBranchCode(
-        activeBranchParent,
-        activeBranchDirection,
-        activeSurvey.tiangList || []
-      );
-      autoKode = res.kodeTiang;
-      branchProps = {
-        parentTiangId: activeBranchParent.id,
-        branchDirection: activeBranchDirection,
-        branchPath: res.branchPath,
-      };
-    }
+    // Hitung penomoran tiang (tanpa huruf T, nomor urut untuk non-eksisting, eksisting tanpa nomor)
+    const isExisting = data.status === 'existing';
+    const newPolesCount = (activeSurvey.tiangList || []).filter((t) => t.status !== 'existing').length;
+    const assignedNomor = isExisting ? 0 : (data.nomorUrut || newPolesCount + 1);
+    const assignedKode = isExisting
+      ? (data.kodeTiang ? data.kodeTiang.replace(/^T[.\-_]?/i, '') : '')
+      : (data.kodeTiang ? data.kodeTiang.replace(/^T[.\-_]?/i, '') : String(assignedNomor));
 
     const newTiang: Tiang = {
       ...data,
-      ...branchProps,
-      kodeTiang: autoKode || data.kodeTiang,
+      nomorUrut: assignedNomor,
+      kodeTiang: assignedKode,
       id: crypto.randomUUID(),
       createdAt: new Date(),
       updatedAt: new Date(),
       isSynced: false,
     };
 
-    // Determine previous tiang for auto-cable connecting
+    // Tentukan tiang acuan untuk auto-connect kabel
     const previousTiangList = activeSurvey.tiangList || [];
     let prevTiang: Tiang | null = null;
-    if (activeBranchParent) {
-      prevTiang = activeBranchParent;
-    } else if (previousTiangList.length >= 1) {
-      prevTiang = previousTiangList[previousTiangList.length - 1];
+    if (activeAnchorTiangId !== null) {
+      if (activeAnchorTiangId) {
+        prevTiang = previousTiangList.find((t) => t.id === activeAnchorTiangId) || null;
+      } else if (previousTiangList.length >= 1) {
+        prevTiang = previousTiangList.slice().reverse().find((t) => t.status !== 'existing') || previousTiangList[previousTiangList.length - 1];
+      }
     }
 
     const updatedSurvey: Survey = {
@@ -1082,6 +1084,9 @@ export function App() {
     setActiveSurvey(updatedSurvey);
     setSurveys(await localDb.getAllSurveys());
     setClickedCoord(null);
+
+    // Otomatis jadikan tiang baru sebagai acuan berikutnya
+    setActiveAnchorTiangId(newTiang.id);
 
     // Prompt auto-connect jalur jika ada tiang sebelumnya (Identik dengan MASIV Mobile)
     if (prevTiang) {
@@ -1684,6 +1689,8 @@ export function App() {
               onClearTargetPin={() => setTargetPin(null)}
               onAddTiangAtCoord={handleAddTiangAtCoord}
               onAddGarduAtCoord={handleAddGarduAtCoord}
+              anchorTiangId={activeAnchorTiangId}
+              onSelectAnchorTiang={setActiveAnchorTiangId}
             />
           </ErrorBoundary>
         </div>
@@ -1866,7 +1873,10 @@ export function App() {
                 {selectedAssetType}
               </span>
               <strong style={{ fontSize: '14px' }}>
-                {selectedAssetType === 'tiang' && `Tiang No. ${selectedAsset.nomorUrut} (${selectedAsset.kodeTiang || 'Tanpa Kode'}) • ${selectedAsset.jenisTiang} (${selectedAsset.tinggiTiang}) • ${selectedAsset.konstruksi}`}
+                {selectedAssetType === 'tiang' &&
+                  (selectedAsset.status === 'existing'
+                    ? `Tiang Eksisting (${selectedAsset.kodeTiang ? selectedAsset.kodeTiang.replace(/^T[.\-_]?/i, '') : 'Tanpa Nomor'}) • ${selectedAsset.jenisTiang} (${selectedAsset.tinggiTiang}) • ${selectedAsset.konstruksi}`
+                    : `Tiang No. ${selectedAsset.kodeTiang ? selectedAsset.kodeTiang.replace(/^T[.\-_]?/i, '') : selectedAsset.nomorUrut} • ${selectedAsset.jenisTiang} (${selectedAsset.tinggiTiang}) • ${selectedAsset.konstruksi}`)}
                 {selectedAssetType === 'gardu' && `Gardu ${selectedAsset.nomorGardu} • ${selectedAsset.jenisGardu} - ${selectedAsset.kapasitasKVA} kVA`}
                 {selectedAssetType === 'jalur' && `Jalur Kabel ${selectedAsset.jenisJaringan} • ${selectedAsset.jenisPenghantar} ${selectedAsset.penampangMM || ''} • ${selectedAsset.panjangMeter}m`}
               </strong>
@@ -2073,7 +2083,7 @@ export function App() {
               lineHeight: 1.5,
               border: '1px solid #334155'
             }}>
-              <div>Hubungkan kabel dari <b>{autoConnectPrompt.prevTiang.kodeTiang || `T.${autoConnectPrompt.prevTiang.nomorUrut}`}</b> ke <b>{autoConnectPrompt.newTiang.kodeTiang || `T.${autoConnectPrompt.newTiang.nomorUrut}`}</b>?</div>
+              <div>Hubungkan kabel dari <b>{autoConnectPrompt.prevTiang.status === 'existing' ? (autoConnectPrompt.prevTiang.kodeTiang ? autoConnectPrompt.prevTiang.kodeTiang.replace(/^T[.\-_]?/i, '') : 'Eksisting') : (autoConnectPrompt.prevTiang.kodeTiang ? autoConnectPrompt.prevTiang.kodeTiang.replace(/^T[.\-_]?/i, '') : `Tiang ${autoConnectPrompt.prevTiang.nomorUrut}`)}</b> ke <b>{autoConnectPrompt.newTiang.status === 'existing' ? (autoConnectPrompt.newTiang.kodeTiang ? autoConnectPrompt.newTiang.kodeTiang.replace(/^T[.\-_]?/i, '') : 'Eksisting') : (autoConnectPrompt.newTiang.kodeTiang ? autoConnectPrompt.newTiang.kodeTiang.replace(/^T[.\-_]?/i, '') : `Tiang ${autoConnectPrompt.newTiang.nomorUrut}`)}</b>?</div>
               <div style={{ marginTop: '8px', fontSize: '11.5px', color: '#94a3b8' }}>
                 • Jaringan: <b style={{ color: '#f8fafc' }}>{autoConnectPrompt.jenisJaringan}</b><br/>
                 • Penghantar: <b style={{ color: '#f8fafc' }}>{autoConnectPrompt.penghantar} ({autoConnectPrompt.penampang})</b><br/>
@@ -2123,21 +2133,10 @@ export function App() {
           <TiangModal
             visible={showTiangModal}
             koordinat={clickedCoord}
-            initialData={
-              editingTiang ||
-              (activeBranchParent && activeBranchDirection
-                ? {
-                    parentTiangId: activeBranchParent.id,
-                    branchDirection: activeBranchDirection,
-                    kodeTiang: generateNextBranchCode(
-                      activeBranchParent,
-                      activeBranchDirection,
-                      activeSurvey?.tiangList || []
-                    ).kodeTiang,
-                  }
-                : undefined)
+            initialData={editingTiang || undefined}
+            nextNomorUrut={
+              ((activeSurvey?.tiangList || []).filter((t) => t.status !== 'existing').length) + 1
             }
-            nextNomorUrut={(activeSurvey?.tiangList?.length || 0) + 1}
             lastJenisJaringan={activeSurvey?.jenisSurvey === 'SUTR' ? 'SUTR' : 'SUTM'}
             onClose={() => {
               setShowTiangModal(false);

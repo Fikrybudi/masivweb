@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, ScaleControl, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -139,6 +139,8 @@ interface SurveyMapProps {
   onClearTargetPin?: () => void;
   onAddTiangAtCoord?: (coord: Coordinate) => void;
   onAddGarduAtCoord?: (coord: Coordinate) => void;
+  anchorTiangId?: string | null;
+  onSelectAnchorTiang?: (tiangId: string | null) => void;
 }
 
 function MapReadyHandler({ onMapReady }: { onMapReady?: (map: L.Map) => void }) {
@@ -277,6 +279,8 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
   onClearTargetPin,
   onAddTiangAtCoord,
   onAddGarduAtCoord,
+  anchorTiangId,
+  onSelectAnchorTiang,
 }) => {
   const defaultCenter: [number, number] = [-6.2088, 106.8456];
   const [center, setCenter] = useState<[number, number]>(defaultCenter);
@@ -380,14 +384,20 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
   const [mouseCoord, setMouseCoord] = useState<Coordinate | null>(null);
   const [screenPos, setScreenPos] = useState<{ x: number; y: number } | null>(null);
 
-  // Find last tiang in active survey
-  const lastTiang = survey?.tiangList && survey.tiangList.length > 0
-    ? survey.tiangList.filter((t) => t?.koordinat && typeof t.koordinat.latitude === 'number' && !isNaN(t.koordinat.latitude)).pop() || null
-    : null;
+  // Active anchor tiang: either specifically selected anchorTiangId, or null (if decoupled), or fallback to last non-existing tiang
+  const activeAnchorTiang = useMemo(() => {
+    if (!survey?.tiangList || survey.tiangList.length === 0) return null;
+    if (anchorTiangId === null) return null; // explicitly decoupled / jalur baru
+    if (anchorTiangId !== undefined) {
+      return survey.tiangList.find((t) => t.id === anchorTiangId) || null;
+    }
+    // Default fallback: last non-existing tiang (or last tiang)
+    return survey.tiangList.slice().reverse().find((t) => t.status !== 'existing') || survey.tiangList[survey.tiangList.length - 1];
+  }, [survey?.tiangList, anchorTiangId]);
 
-  // Live distance from last tiang to cursor/center
-  const liveDist = (mode === 'add-tiang' && lastTiang?.koordinat && mouseCoord && typeof mouseCoord.latitude === 'number')
-    ? calculateDistance(lastTiang.koordinat, mouseCoord)
+  // Live distance from active anchor tiang to cursor/center
+  const liveDist = (mode === 'add-tiang' && activeAnchorTiang?.koordinat && mouseCoord && typeof mouseCoord.latitude === 'number')
+    ? calculateDistance(activeAnchorTiang.koordinat, mouseCoord)
     : null;
 
   const isAddMode = mode === 'add-tiang' || mode === 'add-gardu' || mode === 'draw-jalur';
@@ -409,6 +419,70 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
         height: '100%',
       }}
     >
+      {/* Active Anchor Tiang Floating Status Banner */}
+      {mode === 'add-tiang' && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '12px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: 'rgba(15, 23, 42, 0.92)',
+            backdropFilter: 'blur(8px)',
+            border: activeAnchorTiang ? '1.5px solid #10B981' : '1.5px solid #64748B',
+            borderRadius: '30px',
+            padding: '6px 14px',
+            boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
+            color: 'white',
+            fontSize: '12.5px',
+            fontWeight: 600,
+            pointerEvents: 'auto',
+          }}
+        >
+          {activeAnchorTiang ? (
+            <>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#34D399' }}>
+                <span style={{ fontSize: '14px' }}>🎯</span>
+                <span>Acuan: <b>{activeAnchorTiang.status === 'existing' ? (activeAnchorTiang.kodeTiang ? activeAnchorTiang.kodeTiang.replace(/^T[.\-_]?/i, '') : 'Eksisting') : (activeAnchorTiang.kodeTiang ? activeAnchorTiang.kodeTiang.replace(/^T[.\-_]?/i, '') : activeAnchorTiang.nomorUrut)}</b></span>
+              </span>
+              <span style={{ color: '#94A3B8', fontSize: '11px' }}>• Klik tiang lain untuk pindah acuan</span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onSelectAnchorTiang) onSelectAnchorTiang(null);
+                }}
+                style={{
+                  background: '#334155',
+                  border: '1px solid #475569',
+                  borderRadius: '16px',
+                  color: '#CBD5E1',
+                  padding: '3px 10px',
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+                title="Putus garis bantu untuk membuat tiang/jalur baru yang terpisah"
+              >
+                🚫 Jalur Baru (Lepas Acuan)
+              </button>
+            </>
+          ) : (
+            <>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#94A3B8' }}>
+                <span style={{ fontSize: '14px' }}>🌱</span>
+                <span>Mode: <b>Jalur Baru / Lepas</b> (Tanpa Acuan)</span>
+              </span>
+              <span style={{ color: '#64748B', fontSize: '11px' }}>• Klik sembarang tiang di peta jika ingin menyambung</span>
+            </>
+          )}
+        </div>
+      )}
+
       {/* 1. Unique Floating Target Cursor for Add Tiang */}
       {mode === 'add-tiang' && screenPos && (
         <div
@@ -479,12 +553,12 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
         <NumericScaleBadge />
 
 
-        {/* Live Distance Estimation Line from Last Tiang to Cursor (Mobile MASIV Feature) */}
-        {mode === 'add-tiang' && lastTiang && mouseCoord && (
+        {/* Live Distance Estimation Line from Active Anchor Tiang to Cursor */}
+        {mode === 'add-tiang' && activeAnchorTiang && mouseCoord && (
           <>
             <Polyline
               positions={[
-                [lastTiang.koordinat.latitude, lastTiang.koordinat.longitude],
+                [activeAnchorTiang.koordinat.latitude, activeAnchorTiang.koordinat.longitude],
                 [mouseCoord.latitude, mouseCoord.longitude]
               ]}
               pathOptions={{ color: '#f97316', weight: 2.6, dashArray: '8, 8', opacity: 0.9 }}
@@ -492,7 +566,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
             />
             {liveDist !== null && (
               <Marker
-                position={[(lastTiang.koordinat.latitude + mouseCoord.latitude) / 2, (lastTiang.koordinat.longitude + mouseCoord.longitude) / 2]}
+                position={[(activeAnchorTiang.koordinat.latitude + mouseCoord.latitude) / 2, (activeAnchorTiang.koordinat.longitude + mouseCoord.longitude) / 2]}
                 icon={new L.DivIcon({
                   className: 'live-dist-icon',
                   html: `<div style="background:#f97316;color:white;font-weight:bold;font-size:11px;padding:3px 8px;border-radius:12px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.3);border:1px solid white;">📏 ${liveDist >= 1000 ? (liveDist/1000).toFixed(2) + 'km' : Math.round(liveDist) + 'm'}</div>`,
@@ -684,14 +758,18 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
             labelTextColor = '#E65100';
           }
 
-          const primaryColor = badgeBorderColor;
+          const isAnchor = mode === 'add-tiang' && activeAnchorTiang && activeAnchorTiang.id === t.id;
+          const primaryColor = isAnchor ? '#10B981' : badgeBorderColor;
 
           // Extract height & strength safely
           const tinggiNum = t.tinggiTiang ? String(t.tinggiTiang).replace(/[^0-9]/g, '') : '-';
           const kekuatanNum = t.kekuatanTiang ? String(t.kekuatanTiang).replace(/[^0-9]/g, '') : '-';
           const ukuranLabel = `${tinggiNum}/<br>${kekuatanNum}`;
           const konstruksiLabel = t.konstruksi || '-';
-          const nomorLabel = t.kodeTiang || `T.${t.nomorUrut || tiangIdx + 1}`;
+
+          // Clean numbering (no 'T' letter prefix, existing poles don't get sequential numbers)
+          const cleanKode = t.kodeTiang ? String(t.kodeTiang).trim().replace(/^T[.\-_]?/i, '') : '';
+          const nomorLabel = isExisting ? (cleanKode || 'Eks') : (cleanKode || (t.nomorUrut ? String(t.nomorUrut) : String(tiangIdx + 1)));
 
           // Smart Placement Quadrant (defaults alternating N/S if not set)
           const qIdx =
@@ -713,9 +791,9 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
           const badgeIcon = new L.DivIcon({
             className: 'tiang-icon',
             html: `
-              <div class="tiang-label-badge" style="width:${badgeSize}px;height:${badgeSize}px;border:2px solid ${primaryColor};color:${labelTextColor};${isSelected ? 'box-shadow:0 0 12px #38bdf8;' : ''}">
+              <div class="tiang-label-badge" style="width:${badgeSize}px;height:${badgeSize}px;border:2px solid ${primaryColor};color:${isAnchor ? '#059669' : labelTextColor};${isAnchor ? 'box-shadow:0 0 16px #10B981;' : isSelected ? 'box-shadow:0 0 12px #38bdf8;' : ''}">
                 <div class="tiang-badge-top" style="border-color:${primaryColor};">
-                  <div class="tiang-badge-code" style="border-color:${primaryColor};">${nomorLabel}</div>
+                  <div class="tiang-badge-code" style="border-color:${primaryColor};">${isAnchor ? '🎯 ' + nomorLabel : nomorLabel}</div>
                   <div class="tiang-badge-specs">${ukuranLabel}</div>
                 </div>
                 <div class="tiang-badge-bottom">${konstruksiLabel}</div>
@@ -812,6 +890,22 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                 />
               )}
 
+              {/* Active Anchor Ring Halo Indicator */}
+              {isAnchor && (
+                <CircleMarker
+                  center={[t.koordinat.latitude, t.koordinat.longitude]}
+                  radius={14}
+                  pathOptions={{
+                    color: '#10B981',
+                    fillColor: '#34D399',
+                    fillOpacity: 0.4,
+                    weight: 2.8,
+                    dashArray: '3, 4',
+                  }}
+                  interactive={false}
+                />
+              )}
+
               {/* Exact Coordinate Dot Marker (Respect layerVisibility.titikTiang) */}
               {layerVisibility.titikTiang && (
                 <CircleMarker
@@ -828,6 +922,10 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                       if (e.originalEvent) {
                         e.originalEvent.stopPropagation();
                         e.originalEvent.preventDefault();
+                      }
+                      if (mode === 'add-tiang') {
+                        if (onSelectAnchorTiang) onSelectAnchorTiang(t.id);
+                        return;
                       }
                       if (onTiangClick) onTiangClick(t);
                       else if (onSelectAsset) onSelectAsset(t, 'tiang');
@@ -880,6 +978,10 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
                       if (e.originalEvent) {
                         e.originalEvent.stopPropagation();
                         e.originalEvent.preventDefault();
+                      }
+                      if (mode === 'add-tiang') {
+                        if (onSelectAnchorTiang) onSelectAnchorTiang(t.id);
+                        return;
                       }
                       if (onTiangClick) onTiangClick(t);
                       else if (onSelectAsset) onSelectAsset(t, 'tiang');

@@ -81,9 +81,12 @@ export const TiangModal: React.FC<TiangModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const isExisting = status === 'existing';
+    const cleanCode = kodeTiang.trim() ? kodeTiang.trim().replace(/^T[.\-_]?/i, '') : undefined;
+
     onSubmit({
-      nomorUrut: initialData?.nomorUrut || nextNomorUrut,
-      kodeTiang: kodeTiang.trim() || undefined,
+      nomorUrut: isExisting ? 0 : (initialData?.nomorUrut || nextNomorUrut),
+      kodeTiang: isExisting ? cleanCode : (cleanCode || String(initialData?.nomorUrut || nextNomorUrut)),
       parentTiangId: initialData?.parentTiangId,
       branchDirection: initialData?.branchDirection,
       branchPath: initialData?.branchPath,
@@ -140,7 +143,9 @@ export const TiangModal: React.FC<TiangModalProps> = ({
         }}>
           <div>
             <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>
-              📍 Plotting Tiang No. {initialData?.nomorUrut || nextNomorUrut}
+              {status === 'existing'
+                ? '📍 Plotting Tiang Eksisting'
+                : `📍 Plotting Tiang No. ${initialData?.nomorUrut || nextNomorUrut}`}
             </h3>
             <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#94a3b8' }}>
               Lat: {koordinat.latitude.toFixed(6)}, Lng: {koordinat.longitude.toFixed(6)}
@@ -215,7 +220,7 @@ export const TiangModal: React.FC<TiangModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder="Contoh: T.01 / A-1 (Otomatis jika kosong)"
+              placeholder={status === 'existing' ? 'Kosongkan (Tanpa nomor)' : `Contoh: ${nextNomorUrut} (Otomatis jika kosong)`}
               value={kodeTiang}
               onChange={(e) => setKodeTiang(e.target.value)}
               style={{
