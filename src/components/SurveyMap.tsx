@@ -422,9 +422,10 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
       {/* Active Anchor Tiang Floating Status Banner */}
       {mode === 'add-tiang' && (
         <div
+          className="active-anchor-banner"
           style={{
             position: 'absolute',
-            top: '12px',
+            top: '80px',
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 1000,
