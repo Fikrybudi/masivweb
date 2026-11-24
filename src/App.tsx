@@ -4,7 +4,7 @@ import { supabase } from './services/supabaseClient';
 import { LoginScreen } from './components/Auth/LoginScreen';
 import { SplashScreen } from './components/Common/SplashScreen';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Survey, Coordinate, Tiang, Gardu, JalurKabel } from './types';
+import { Survey, Coordinate, Tiang, Gardu, JalurKabel, SiteplanOverlay } from './types';
 import { SurveyMap } from './components/SurveyMap';
 import { Sidebar } from './components/Sidebar';
 import { localDb } from './services/localDb';
@@ -12,6 +12,7 @@ import { supabaseSurveyService } from './services/supabaseService';
 import { BASurveyModal } from './components/Forms/BASurveyModal';
 import { SurveySummaryModal } from './components/Modals/SurveySummaryModal';
 import { ExportPdfModal } from './components/Modals/ExportPdfModal';
+import { SiteplanModal } from './components/Modals/SiteplanModal';
 import { TiangModal } from './components/Forms/TiangModal';
 import { GarduModal } from './components/Forms/GarduModal';
 import { JalurModal } from './components/Forms/JalurModal';
@@ -27,7 +28,7 @@ import { OverlayFile } from './types/overlayTypes';
 import { cloudGisService } from './services/cloudGisService';
 import { generateNextBranchCode, getBranchModeBannerLabel } from './utils/branchUtils';
 import { calculateDistance } from './utils/geoUtils';
-import { Layers, UploadCloud, Trash2, Menu, ChevronRight, BarChart2, Edit3, Undo2, Redo2, Bell, X, Compass } from 'lucide-react';
+import { Layers, UploadCloud, Trash2, Menu, ChevronRight, ChevronDown, MoreVertical, BarChart2, Edit3, Undo2, Redo2, Bell, X, Compass, Map as MapIcon } from 'lucide-react';
 import { notificationService, SuperadminNotification } from './services/notificationService';
 import { NotificationModal } from './components/Modals/NotificationModal';
 import { GotoCoordinateModal } from './components/Modals/GotoCoordinateModal';
@@ -97,6 +98,27 @@ export function App() {
   const [editingTiang, setEditingTiang] = useState<Tiang | null>(null);
   const [actionJalur, setActionJalur] = useState<JalurKabel | null>(null);
   const [editingJalur, setEditingJalur] = useState<JalurKabel | null>(null);
+
+  // Siteplan Overlay State
+  const [showSiteplanModal, setShowSiteplanModal] = useState<boolean>(false);
+  const [isAdjustingSiteplan, setIsAdjustingSiteplan] = useState<boolean>(false);
+
+  // Header Dropdown Menu States
+  const [showDataLayerDropdown, setShowDataLayerDropdown] = useState<boolean>(false);
+  const [showMoreActionsDropdown, setShowMoreActionsDropdown] = useState<boolean>(false);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.header-dropdown-container')) {
+        setShowDataLayerDropdown(false);
+        setShowMoreActionsDropdown(false);
+      }
+    };
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, []);
 
   // Overlay Layers State (Data Eksisting KML / KMZ / CSV)
   const [overlays, setOverlays] = useState<OverlayFile[]>([]);
@@ -1000,6 +1022,28 @@ export function App() {
     setShowSummaryModal(true);
   };
 
+  const handleUpdateSurvey = async (updatedSurvey: Survey) => {
+    await localDb.saveSurvey(updatedSurvey);
+    if (activeSurvey?.id === updatedSurvey.id) {
+      setActiveSurvey(updatedSurvey);
+    }
+    if (summarySurvey?.id === updatedSurvey.id) {
+      setSummarySurvey(updatedSurvey);
+    }
+    setSurveys(await localDb.getAllSurveys());
+  };
+
+  const handleUpdateSiteplan = async (overlay: SiteplanOverlay | null) => {
+    if (!activeSurvey) return;
+    const updated: Survey = {
+      ...activeSurvey,
+      siteplanOverlay: overlay || undefined,
+      updatedAt: new Date(),
+      isSynced: false,
+    };
+    await handleUpdateSurvey(updated);
+  };
+
   // Handle tiang label shift (snapped to quadrant 0..7)
   const handleTiangLabelShift = async (tiangId: string, newPosition: number, newDistance?: number) => {
     if (!activeSurvey) return;
@@ -1453,7 +1497,7 @@ export function App() {
             </div>
           </div>
 
-          {/* Header Row 2 (or Right Side on Desktop): Action Buttons */}
+          {/* Header Row 2 (or Right Side on Desktop): Compact & Streamlined Action Toolbar */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -1462,52 +1506,160 @@ export function App() {
             paddingBottom: isMobile ? '2px' : '0',
             flexShrink: 0,
           }}>
-            <button
-              onClick={() => setShowLayerModal(true)}
-              title="Atur Visibilitas Layer Peta (Tiang, Gardu, Jalur)"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                background: '#1e293b',
-                color: '#38bdf8',
-                border: '1px solid #0284c7',
-                padding: '6px 10px',
-                borderRadius: '6px',
-                fontSize: '11.5px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-              }}
-            >
-              <Layers size={13} />
-              Layer Peta
-            </button>
+            {/* 1. Dropdown: DATA LAYER */}
+            <div className="header-dropdown-container" style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowDataLayerDropdown(prev => !prev);
+                  setShowMoreActionsDropdown(false);
+                }}
+                title="Kelola Layer Peta, Data Eksisting KML, dan Siteplan Denah"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  background: activeSurvey?.siteplanOverlay ? 'rgba(16, 185, 129, 0.15)' : '#1e293b',
+                  color: activeSurvey?.siteplanOverlay ? '#34d399' : '#38bdf8',
+                  border: `1px solid ${activeSurvey?.siteplanOverlay ? '#10b981' : '#0284c7'}`,
+                  padding: '6px 10px',
+                  borderRadius: '6px',
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}
+              >
+                <Layers size={13} />
+                <span>Data Layer</span>
+                {activeSurvey?.siteplanOverlay && (
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
+                )}
+                <ChevronDown size={12} style={{ transform: showDataLayerDropdown ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+              </button>
 
-            <button
-              onClick={() => setShowImportModal(true)}
-              title="Import Data Eksisting (KML / KMZ / CSV)"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                background: '#1e293b',
-                color: '#f97316',
-                border: '1px solid #f97316',
-                padding: '6px 10px',
-                borderRadius: '6px',
-                fontSize: '11.5px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-              }}
-            >
-              <UploadCloud size={13} />
-              Data Eksisting
-            </button>
+              {/* Data Layer Dropdown Menu */}
+              {showDataLayerDropdown && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 6px)',
+                    left: 0,
+                    zIndex: 1100,
+                    background: '#0f172a',
+                    border: '1px solid #334155',
+                    borderRadius: '8px',
+                    padding: '6px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                    minWidth: '220px',
+                    boxShadow: '0 10px 25px -5px rgba(0,0,0,0.6)',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLayerModal(true);
+                      setShowDataLayerDropdown(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      background: 'transparent',
+                      color: '#f8fafc',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '8px 10px',
+                      fontSize: '11.5px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'background 0.1s',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#1e293b')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <Layers size={14} color="#38bdf8" />
+                    <div>
+                      <div style={{ fontWeight: 600 }}>Visibilitas Layer Peta</div>
+                      <div style={{ fontSize: '10px', color: '#94a3b8' }}>Filter tiang, gardu, dan jalur</div>
+                    </div>
+                  </button>
 
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowImportModal(true);
+                      setShowDataLayerDropdown(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      background: 'transparent',
+                      color: '#f8fafc',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '8px 10px',
+                      fontSize: '11.5px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'background 0.1s',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#1e293b')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <UploadCloud size={14} color="#f97316" />
+                    <div>
+                      <div style={{ fontWeight: 600 }}>Data Eksisting (KML / CSV)</div>
+                      <div style={{ fontSize: '10px', color: '#94a3b8' }}>Import referensi jaringan eksisting</div>
+                    </div>
+                  </button>
+
+                  {activeSurvey && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSiteplanModal(true);
+                        setShowDataLayerDropdown(false);
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        background: 'transparent',
+                        color: '#f8fafc',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '8px 10px',
+                        fontSize: '11.5px',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'background 0.1s',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = '#1e293b')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <MapIcon size={14} color="#34d399" />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>Siteplan Denah Developer</span>
+                          {activeSurvey.siteplanOverlay && (
+                            <span style={{ fontSize: '9px', background: '#065f46', color: '#6ee7b7', padding: '1px 5px', borderRadius: '4px' }}>Aktif</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#94a3b8' }}>Tempelkan gambar denah kavling di peta</div>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 2. Cari Koordinat */}
             <button
               onClick={() => setShowGotoModal(true)}
               title="Cari & Lompat ke Titik Koordinat Peta"
@@ -1528,69 +1680,21 @@ export function App() {
               }}
             >
               <Compass size={13} />
-              Cari Koordinat
+              <span>Cari Koordinat</span>
             </button>
 
-            {activeSurvey && (
-              <>
-                <button
-                  onClick={() => handleOpenSummary(activeSurvey)}
-                  title="Rekapitulasi Survey & 5 Menu Export (PDF, KML, BA, Gambar, CSV)"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '5px',
-                    background: '#1e293b',
-                    color: '#38bdf8',
-                    border: '1px solid #0284c7',
-                    padding: '6px 10px',
-                    borderRadius: '6px',
-                    fontSize: '11.5px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                  }}
-                >
-                  <BarChart2 size={13} />
-                  Rekap Survey
-                </button>
-
-                <button
-                  onClick={() => handleOpenEditSurvey(activeSurvey)}
-                  title="Edit Data Survey & Berita Acara (BA)"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '5px',
-                    background: '#1e293b',
-                    color: '#f59e0b',
-                    border: '1px solid #f59e0b',
-                    padding: '6px 10px',
-                    borderRadius: '6px',
-                    fontSize: '11.5px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                  }}
-                >
-                  <Edit3 size={13} />
-                  Edit BA
-                </button>
-              </>
-            )}
+            {/* 3. Rekap Survey (Main Action) */}
             {activeSurvey && (
               <button
-                onClick={() => handleDeleteSurvey(activeSurvey)}
-                title="Hapus Survey Ini"
+                onClick={() => handleOpenSummary(activeSurvey)}
+                title="Rekapitulasi Survey & 5 Menu Export (PDF, KML, BA, Gambar, CSV)"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '5px',
-                  background: 'rgba(239, 68, 68, 0.15)',
-                  color: '#f87171',
-                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                  background: '#1e293b',
+                  color: '#38bdf8',
+                  border: '1px solid #0284c7',
                   padding: '6px 10px',
                   borderRadius: '6px',
                   fontSize: '11.5px',
@@ -1600,9 +1704,138 @@ export function App() {
                   flexShrink: 0,
                 }}
               >
-                <Trash2 size={13} />
-                Hapus
+                <BarChart2 size={13} />
+                <span>Rekap Survey</span>
               </button>
+            )}
+
+            {/* 4. Edit BA */}
+            {activeSurvey && (
+              <button
+                onClick={() => handleOpenEditSurvey(activeSurvey)}
+                title="Edit Data Survey & Berita Acara (BA)"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  background: '#1e293b',
+                  color: '#f59e0b',
+                  border: '1px solid #f59e0b',
+                  padding: '6px 10px',
+                  borderRadius: '6px',
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}
+              >
+                <Edit3 size={13} />
+                <span>Edit BA</span>
+              </button>
+            )}
+
+            {/* 5. More Actions Dropdown (Titik Tiga: Hapus & Info) */}
+            {activeSurvey && (
+              <div className="header-dropdown-container" style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowMoreActionsDropdown(prev => !prev);
+                    setShowDataLayerDropdown(false);
+                  }}
+                  title="Menu Opsi Lainnya"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: '#1e293b',
+                    color: '#94a3b8',
+                    border: '1px solid #475569',
+                    padding: '6px 8px',
+                    borderRadius: '6px',
+                    fontSize: '11.5px',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  <MoreVertical size={14} />
+                </button>
+
+                {showMoreActionsDropdown && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 6px)',
+                      right: 0,
+                      zIndex: 1100,
+                      background: '#0f172a',
+                      border: '1px solid #334155',
+                      borderRadius: '8px',
+                      padding: '6px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                      minWidth: '170px',
+                      boxShadow: '0 10px 25px -5px rgba(0,0,0,0.6)',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAboutModal(true);
+                        setShowMoreActionsDropdown(false);
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        background: 'transparent',
+                        color: '#f8fafc',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '8px 10px',
+                        fontSize: '11.5px',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = '#1e293b')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <Menu size={13} color="#38bdf8" />
+                      <span>Tentang MASIV Web</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMoreActionsDropdown(false);
+                        handleDeleteSurvey(activeSurvey);
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        background: 'rgba(239, 68, 68, 0.1)',
+                        color: '#f87171',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '8px 10px',
+                        fontSize: '11.5px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)')}
+                    >
+                      <Trash2 size={13} color="#f87171" />
+                      <span>Hapus Survey Ini</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Superadmin Realtime Survey Activity Bell */}
@@ -1691,6 +1924,10 @@ export function App() {
               onAddGarduAtCoord={handleAddGarduAtCoord}
               anchorTiangId={activeAnchorTiangId}
               onSelectAnchorTiang={setActiveAnchorTiangId}
+              siteplanOverlay={activeSurvey?.siteplanOverlay}
+              onUpdateSiteplanOverlay={handleUpdateSiteplan}
+              isAdjustingSiteplan={isAdjustingSiteplan}
+              onToggleAdjustSiteplan={setIsAdjustingSiteplan}
             />
           </ErrorBoundary>
         </div>
@@ -1986,6 +2223,7 @@ export function App() {
           setSummarySurvey(null);
         }}
         onEditSurvey={handleOpenEditSurvey}
+        onUpdateSurvey={handleUpdateSurvey}
         onOpenExportPdfGambar={() => {
           setShowSummaryModal(false);
           setShowExportPdfModal(true);
@@ -2001,6 +2239,20 @@ export function App() {
           onClose={() => setShowExportPdfModal(false)}
         />
       )}
+
+      {/* Modal Siteplan Denah Developer */}
+      <SiteplanModal
+        visible={showSiteplanModal}
+        survey={activeSurvey}
+        onClose={() => setShowSiteplanModal(false)}
+        onUpdateSiteplan={handleUpdateSiteplan}
+        onStartCalibration={() => setIsAdjustingSiteplan(true)}
+        mapCenter={
+          leafletMap
+            ? { lat: leafletMap.getCenter().lat, lng: leafletMap.getCenter().lng }
+            : null
+        }
+      />
 
       {/* Tiang Action Modal (Branching R/L, Move, Edit, Delete) */}
       <TiangActionModal

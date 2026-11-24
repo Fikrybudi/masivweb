@@ -248,7 +248,8 @@ export interface Survey {
     jalurList: JalurKabel[];
     jembatanKabelList?: JembatanKabel[];
     persilList?: PersilPelanggan[];
-
+    customWorkItems?: CustomWorkItem[];
+    siteplanOverlay?: SiteplanOverlay;
 
     // Rencana teknik summary
     rencanaTeknik?: RencanaTeknik;
@@ -263,6 +264,25 @@ export interface Survey {
     createdAt: Date;
     updatedAt: Date;
     isSynced: boolean;
+}
+
+export interface CustomWorkItem {
+    id: string;
+    uraian: string;
+    volume: number;
+    satuan: string;
+    keterangan?: string;
+}
+
+export interface SiteplanOverlay {
+    id: string;
+    surveyId: string;
+    name: string;
+    imageUrl: string; // Base64 or Blob URL
+    bounds: [[number, number], [number, number]]; // [[south, west], [north, east]]
+    opacity: number; // 0.1 to 1.0 (default 0.7)
+    visible: boolean;
+    rotation?: number; // degrees
 }
 
 // =============================================================================

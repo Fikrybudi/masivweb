@@ -691,6 +691,13 @@ html, body, #root {
   to { transform: rotate(360deg); }
 }
 
+/* Siteplan Developer Hardware-Accelerated Image Layer Rotation */
+.siteplan-image-layer {
+  transform-origin: center center !important;
+  rotate: var(--siteplan-rotation, 0deg) !important;
+  pointer-events: none !important;
+}
+
 .animate-spin {
   animation: spin 1s linear infinite;
 }

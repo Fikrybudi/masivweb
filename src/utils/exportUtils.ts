@@ -249,6 +249,22 @@ export function exportToCSV(survey: Survey): boolean {
       ].join(','));
     });
 
+    // Section Pekerjaan Tambahan / Non-Paket
+    if (survey.customWorkItems && survey.customWorkItems.length > 0) {
+      lines.push(``);
+      lines.push(`"PEKERJAAN LAINNYA / NON-PAKET"`);
+      lines.push(`"No","Uraian Pekerjaan","Volume","Satuan","Keterangan"`);
+      survey.customWorkItems.forEach((c, i) => {
+        lines.push([
+          i + 1,
+          `"${(c.uraian || '').replace(/"/g, '""')}"`,
+          c.volume,
+          `"${(c.satuan || '').replace(/"/g, '""')}"`,
+          `"${(c.keterangan || '').replace(/"/g, '""')}"`,
+        ].join(','));
+      });
+    }
+
     const csvString = '\uFEFF' + lines.join('\r\n');
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     downloadBlob(blob, filename);

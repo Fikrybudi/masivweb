@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, ScaleControl, useMap, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, ScaleControl, ImageOverlay, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { Coordinate, Survey, Tiang } from '../types';
+import { Coordinate, Survey, Tiang, SiteplanOverlay } from '../types';
 import { OverlayFile } from '../types/overlayTypes';
 import { calculateDistance, getNumericScaleString } from '../utils/geoUtils';
 
@@ -141,15 +141,22 @@ interface SurveyMapProps {
   onAddGarduAtCoord?: (coord: Coordinate) => void;
   anchorTiangId?: string | null;
   onSelectAnchorTiang?: (tiangId: string | null) => void;
+  siteplanOverlay?: SiteplanOverlay | null;
+  onUpdateSiteplanOverlay?: (overlay: SiteplanOverlay | null) => void;
+  isAdjustingSiteplan?: boolean;
+  onToggleAdjustSiteplan?: (adjusting: boolean) => void;
 }
 
-function MapReadyHandler({ onMapReady }: { onMapReady?: (map: L.Map) => void }) {
+function MapReadyHandler({ onMapReady, setInternalMap }: { onMapReady?: (map: L.Map) => void; setInternalMap?: (map: L.Map) => void }) {
   const map = useMap();
   useEffect(() => {
     if (onMapReady) {
       onMapReady(map);
     }
-  }, [map, onMapReady]);
+    if (setInternalMap) {
+      setInternalMap(map);
+    }
+  }, [map, onMapReady, setInternalMap]);
   return null;
 }
 
@@ -248,6 +255,21 @@ function MapEventsHandler({
 }
 
 
+function rotatePoint(lat: number, lng: number, cLat: number, cLng: number, angleDeg: number): [number, number] {
+  if (!angleDeg) return [lat, lng];
+  const rad = (angleDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const dLat = lat - cLat;
+  const latFactor = Math.cos((cLat * Math.PI) / 180) || 1;
+  const dLng = (lng - cLng) * latFactor;
+
+  const rLat = dLat * cos - dLng * sin;
+  const rLng = (dLat * sin + dLng * cos) / latFactor;
+
+  return [cLat + rLat, cLng + rLng];
+}
+
 export const SurveyMap: React.FC<SurveyMapProps> = ({
   survey,
   selectedAsset,
@@ -281,7 +303,12 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
   onAddGarduAtCoord,
   anchorTiangId,
   onSelectAnchorTiang,
+  siteplanOverlay,
+  onUpdateSiteplanOverlay,
+  isAdjustingSiteplan,
+  onToggleAdjustSiteplan,
 }) => {
+  const [internalMap, setInternalMap] = useState<L.Map | null>(null);
   const defaultCenter: [number, number] = [-6.2088, 106.8456];
   const [center, setCenter] = useState<[number, number]>(defaultCenter);
   const [zoom, setZoom] = useState<number>(18);
@@ -403,6 +430,179 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
   const isAddMode = mode === 'add-tiang' || mode === 'add-gardu' || mode === 'draw-jalur';
   const modeClass = isAddMode ? 'map-mode-add-tiang' : 'map-mode-default';
 
+  // Siteplan Corner & Center Drag Icons for Calibration
+  const centerMoveIcon = useMemo(() => new L.DivIcon({
+    className: 'siteplan-center-handle',
+    html: `
+      <div style="
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        background: #10b981;
+        border: 2px solid white;
+        border-radius: 20px;
+        padding: 3px 9px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+        color: white;
+        font-size: 11px;
+        font-weight: 800;
+        cursor: grab;
+        white-space: nowrap;
+      ">
+        <span style="font-size: 13px;">✥</span>
+        <span>Geser Denah</span>
+      </div>
+    `,
+    iconSize: [110, 26],
+    iconAnchor: [55, 13],
+  }), []);
+
+  const nwCornerIcon = useMemo(() => new L.DivIcon({
+    className: 'siteplan-corner-handle',
+    html: `<div style="width:26px;height:26px;background:#0284c7;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.6);color:white;font-size:10px;font-weight:800;cursor:grab;">NW</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  }), []);
+
+  const neCornerIcon = useMemo(() => new L.DivIcon({
+    className: 'siteplan-corner-handle',
+    html: `<div style="width:26px;height:26px;background:#0284c7;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.6);color:white;font-size:10px;font-weight:800;cursor:grab;">NE</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  }), []);
+
+  const swCornerIcon = useMemo(() => new L.DivIcon({
+    className: 'siteplan-corner-handle',
+    html: `<div style="width:26px;height:26px;background:#0284c7;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.6);color:white;font-size:10px;font-weight:800;cursor:grab;">SW</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  }), []);
+
+  const seCornerIcon = useMemo(() => new L.DivIcon({
+    className: 'siteplan-corner-handle',
+    html: `<div style="width:26px;height:26px;background:#0284c7;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.6);color:white;font-size:10px;font-weight:800;cursor:grab;">SE</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  }), []);
+
+  const handleCenterDrag = (e: L.LeafletEvent) => {
+    if (!siteplanOverlay || !onUpdateSiteplanOverlay) return;
+    const marker = e.target as L.Marker;
+    const newPos = marker.getLatLng();
+
+    const [ [minLat, minLng], [maxLat, maxLng] ] = siteplanOverlay.bounds;
+    const curCenterLat = (minLat + maxLat) / 2;
+    const curCenterLng = (minLng + maxLng) / 2;
+
+    const dLat = newPos.lat - curCenterLat;
+    const dLng = newPos.lng - curCenterLng;
+
+    onUpdateSiteplanOverlay({
+      ...siteplanOverlay,
+      bounds: [
+        [minLat + dLat, minLng + dLng],
+        [maxLat + dLat, maxLng + dLng],
+      ],
+    });
+  };
+
+  const handleRotateSiteplan = (deltaAngle: number, isAbsolute: boolean = false) => {
+    if (!siteplanOverlay || !onUpdateSiteplanOverlay) return;
+    let newRotation: number;
+    if (isAbsolute) {
+      newRotation = ((deltaAngle % 360) + 360) % 360;
+    } else {
+      const cur = siteplanOverlay.rotation || 0;
+      newRotation = (((cur + deltaAngle) % 360) + 360) % 360;
+    }
+    onUpdateSiteplanOverlay({
+      ...siteplanOverlay,
+      rotation: Math.round(newRotation),
+    });
+  };
+
+  const handleCornerDrag = (corner: 'NW' | 'NE' | 'SW' | 'SE', e: L.LeafletEvent) => {
+    if (!siteplanOverlay || !onUpdateSiteplanOverlay) return;
+    const marker = e.target as L.Marker;
+    const newPos = marker.getLatLng();
+
+    let minLat = siteplanOverlay.bounds[0][0];
+    let minLng = siteplanOverlay.bounds[0][1];
+    let maxLat = siteplanOverlay.bounds[1][0];
+    let maxLng = siteplanOverlay.bounds[1][1];
+
+    if (corner === 'NW') {
+      maxLat = Math.max(newPos.lat, minLat + 0.0001);
+      minLng = Math.min(newPos.lng, maxLng - 0.0001);
+    } else if (corner === 'NE') {
+      maxLat = Math.max(newPos.lat, minLat + 0.0001);
+      maxLng = Math.max(newPos.lng, minLng + 0.0001);
+    } else if (corner === 'SW') {
+      minLat = Math.min(newPos.lat, maxLat - 0.0001);
+      minLng = Math.min(newPos.lng, maxLng - 0.0001);
+    } else if (corner === 'SE') {
+      minLat = Math.min(newPos.lat, maxLat - 0.0001);
+      maxLng = Math.max(newPos.lng, minLng + 0.0001);
+    }
+
+    onUpdateSiteplanOverlay({
+      ...siteplanOverlay,
+      bounds: [[minLat, minLng], [maxLat, maxLng]],
+    });
+  };
+
+  const handleNudgeSiteplan = (dLat: number, dLng: number) => {
+    if (!siteplanOverlay || !onUpdateSiteplanOverlay) return;
+    const [ [minLat, minLng], [maxLat, maxLng] ] = siteplanOverlay.bounds;
+    onUpdateSiteplanOverlay({
+      ...siteplanOverlay,
+      bounds: [
+        [minLat + dLat, minLng + dLng],
+        [maxLat + dLat, maxLng + dLng],
+      ],
+    });
+  };
+
+  const handleScaleSiteplan = (factor: number) => {
+    if (!siteplanOverlay || !onUpdateSiteplanOverlay) return;
+    const [ [minLat, minLng], [maxLat, maxLng] ] = siteplanOverlay.bounds;
+    const centerLat = (minLat + maxLat) / 2;
+    const centerLng = (minLng + maxLng) / 2;
+    const halfLat = ((maxLat - minLat) / 2) * factor;
+    const halfLng = ((maxLng - minLng) / 2) * factor;
+    onUpdateSiteplanOverlay({
+      ...siteplanOverlay,
+      bounds: [
+        [centerLat - halfLat, centerLng - halfLng],
+        [centerLat + halfLat, centerLng + halfLng],
+      ],
+    });
+  };
+
+  const handleRecenterSiteplan = () => {
+    if (!siteplanOverlay || !onUpdateSiteplanOverlay || !internalMap) return;
+    const mapCenter = internalMap.getCenter();
+    const halfLat = Math.abs(siteplanOverlay.bounds[1][0] - siteplanOverlay.bounds[0][0]) / 2;
+    const halfLng = Math.abs(siteplanOverlay.bounds[1][1] - siteplanOverlay.bounds[0][1]) / 2;
+    onUpdateSiteplanOverlay({
+      ...siteplanOverlay,
+      bounds: [
+        [mapCenter.lat - halfLat, mapCenter.lng - halfLng],
+        [mapCenter.lat + halfLat, mapCenter.lng + halfLng],
+      ],
+    });
+  };
+
+  // Siteplan Center and Rotated Corner Coordinates for Precision Calibration
+  const siteplanCenterLat = siteplanOverlay ? (siteplanOverlay.bounds[0][0] + siteplanOverlay.bounds[1][0]) / 2 : 0;
+  const siteplanCenterLng = siteplanOverlay ? (siteplanOverlay.bounds[0][1] + siteplanOverlay.bounds[1][1]) / 2 : 0;
+  const siteplanRot = siteplanOverlay?.rotation || 0;
+
+  const nwRot = siteplanOverlay ? rotatePoint(siteplanOverlay.bounds[1][0], siteplanOverlay.bounds[0][1], siteplanCenterLat, siteplanCenterLng, siteplanRot) : ([0, 0] as [number, number]);
+  const neRot = siteplanOverlay ? rotatePoint(siteplanOverlay.bounds[1][0], siteplanOverlay.bounds[1][1], siteplanCenterLat, siteplanCenterLng, siteplanRot) : ([0, 0] as [number, number]);
+  const seRot = siteplanOverlay ? rotatePoint(siteplanOverlay.bounds[0][0], siteplanOverlay.bounds[1][1], siteplanCenterLat, siteplanCenterLng, siteplanRot) : ([0, 0] as [number, number]);
+  const swRot = siteplanOverlay ? rotatePoint(siteplanOverlay.bounds[0][0], siteplanOverlay.bounds[0][1], siteplanCenterLat, siteplanCenterLng, siteplanRot) : ([0, 0] as [number, number]);
+
   return (
     <div
       className={modeClass}
@@ -417,6 +617,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
         position: 'relative',
         width: '100%',
         height: '100%',
+        ['--siteplan-rotation' as any]: `${siteplanOverlay?.rotation || 0}deg`,
       }}
     >
       {/* Active Anchor Tiang Floating Status Banner */}
@@ -484,6 +685,145 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
         </div>
       )}
 
+      {/* Floating Calibration Toolbar for Siteplan Denah */}
+      {isAdjustingSiteplan && siteplanOverlay && (
+        <div
+          className="active-anchor-banner"
+          style={{
+            position: 'absolute',
+            top: '80px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: 'rgba(15, 23, 42, 0.95)',
+            backdropFilter: 'blur(10px)',
+            border: '2px solid #0284c7',
+            borderRadius: '30px',
+            padding: '6px 14px',
+            boxShadow: '0 8px 25px rgba(2, 132, 199, 0.4)',
+            color: 'white',
+            fontSize: '12px',
+            fontWeight: 600,
+            pointerEvents: 'auto',
+            flexWrap: 'wrap',
+            justifyContent: 'center',
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#38bdf8' }}>
+            <span>📐</span>
+            <span>Kalibrasi Denah: <b>Drag Gagang Hijau (Pindah) / Pin Biru (Ukuran)</b></span>
+          </span>
+
+          {/* Rotasi Denah Slider & Quick Controls */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#1e293b', padding: '3px 8px', borderRadius: '14px', border: '1px solid #334155' }}>
+            <span style={{ fontSize: '11px', color: '#f59e0b', fontWeight: 700 }}>🔄 Putar:</span>
+            <input
+              type="range"
+              min="0"
+              max="360"
+              step="1"
+              value={siteplanOverlay.rotation || 0}
+              onChange={(e) => handleRotateSiteplan(parseInt(e.target.value, 10), true)}
+              style={{ width: '70px', accentColor: '#f59e0b', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: '11px', color: '#f59e0b', fontWeight: 700, minWidth: '30px' }}>
+              {siteplanOverlay.rotation || 0}°
+            </span>
+            <button
+              type="button"
+              onClick={() => handleRotateSiteplan(-15)}
+              title="Putar 15° ke Kiri (Berlawanan jarum jam)"
+              style={{ background: '#334155', border: 'none', color: 'white', borderRadius: '4px', padding: '2px 5px', fontSize: '10px', cursor: 'pointer' }}
+            >
+              ↺ 15°
+            </button>
+            <button
+              type="button"
+              onClick={() => handleRotateSiteplan(15)}
+              title="Putar 15° ke Kanan (Searah jarum jam)"
+              style={{ background: '#334155', border: 'none', color: 'white', borderRadius: '4px', padding: '2px 5px', fontSize: '10px', cursor: 'pointer' }}
+            >
+              ↻ 15°
+            </button>
+            <button
+              type="button"
+              onClick={() => handleRotateSiteplan(0, true)}
+              title="Reset rotasi denah ke 0°"
+              style={{ background: '#334155', border: 'none', color: '#94a3b8', borderRadius: '4px', padding: '2px 5px', fontSize: '10px', cursor: 'pointer' }}
+            >
+              0°
+            </button>
+          </div>
+
+          {/* Opacity Slider */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#1e293b', padding: '3px 8px', borderRadius: '14px', border: '1px solid #334155' }}>
+            <span style={{ fontSize: '10.5px', color: '#94a3b8' }}>Transparansi:</span>
+            <input
+              type="range"
+              min="0.1"
+              max="1.0"
+              step="0.05"
+              value={siteplanOverlay.opacity}
+              onChange={(e) => onUpdateSiteplanOverlay?.({ ...siteplanOverlay, opacity: parseFloat(e.target.value) })}
+              style={{ width: '55px', accentColor: '#0284c7', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: '10.5px', color: '#38bdf8', minWidth: '28px' }}>{Math.round(siteplanOverlay.opacity * 100)}%</span>
+          </div>
+
+          {/* Scale & Recenter Quick Buttons */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <button
+              type="button"
+              onClick={handleRecenterSiteplan}
+              title="Pusatkan denah ke tengah layar peta"
+              style={{ background: '#1e293b', border: '1px solid #475569', color: '#f8fafc', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', cursor: 'pointer' }}
+            >
+              ✛ Pusatkan
+            </button>
+            <button
+              type="button"
+              onClick={() => handleScaleSiteplan(1.1)}
+              title="Perbesar denah (+10%)"
+              style={{ background: '#1e293b', border: '1px solid #475569', color: '#f8fafc', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', cursor: 'pointer' }}
+            >
+              ➕
+            </button>
+            <button
+              type="button"
+              onClick={() => handleScaleSiteplan(0.9)}
+              title="Perkecil denah (-10%)"
+              style={{ background: '#1e293b', border: '1px solid #475569', color: '#f8fafc', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', cursor: 'pointer' }}
+            >
+              ➖
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onToggleAdjustSiteplan?.(false)}
+            style={{
+              background: '#10b981',
+              border: 'none',
+              borderRadius: '16px',
+              color: 'white',
+              padding: '4px 12px',
+              fontSize: '11.5px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              boxShadow: '0 2px 8px rgba(16, 185, 129, 0.4)',
+            }}
+          >
+            🔒 Kunci Posisi & Selesai
+          </button>
+        </div>
+      )}
+
       {/* 1. Unique Floating Target Cursor for Add Tiang */}
       {mode === 'add-tiang' && screenPos && (
         <div
@@ -531,7 +871,7 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
         preferCanvas={true}
         style={{ width: '100%', height: '100%', minHeight: '400px' }}
       >
-        <MapReadyHandler onMapReady={onMapReady} />
+        <MapReadyHandler onMapReady={onMapReady} setInternalMap={setInternalMap} />
         <MapUpdater center={center} />
         <RecenterControl survey={survey} />
         <MapEventsHandler
@@ -548,6 +888,78 @@ export const SurveyMap: React.FC<SurveyMapProps> = ({
           maxZoom={22}
           maxNativeZoom={tileConfig.maxNativeZoom || 19}
         />
+
+        {/* Siteplan Developer Overlay (Pendekatan B - Georeferenced Image with GPU Hardware Rotation) */}
+        {siteplanOverlay && siteplanOverlay.visible && (
+          <ImageOverlay
+            url={siteplanOverlay.imageUrl}
+            bounds={siteplanOverlay.bounds}
+            opacity={siteplanOverlay.opacity}
+            zIndex={350}
+            interactive={false}
+            className="siteplan-image-layer"
+          />
+        )}
+
+        {/* Siteplan Calibration Handles & Boundary (Rotated with Center Drag Handle) */}
+        {isAdjustingSiteplan && siteplanOverlay && (
+          <>
+            <Polyline
+              positions={[nwRot, neRot, seRot, swRot, nwRot]}
+              pathOptions={{
+                color: '#0284c7',
+                weight: 2.5,
+                dashArray: '6, 6',
+                fill: false,
+              }}
+            />
+            {/* Center Drag Handle (Gagang Geser Cepat Denah) */}
+            <Marker
+              position={[siteplanCenterLat, siteplanCenterLng]}
+              draggable={true}
+              icon={centerMoveIcon}
+              eventHandlers={{
+                drag: handleCenterDrag,
+              }}
+            />
+            {/* NW Corner */}
+            <Marker
+              position={nwRot}
+              draggable={true}
+              icon={nwCornerIcon}
+              eventHandlers={{
+                drag: (e) => handleCornerDrag('NW', e),
+              }}
+            />
+            {/* NE Corner */}
+            <Marker
+              position={neRot}
+              draggable={true}
+              icon={neCornerIcon}
+              eventHandlers={{
+                drag: (e) => handleCornerDrag('NE', e),
+              }}
+            />
+            {/* SW Corner */}
+            <Marker
+              position={swRot}
+              draggable={true}
+              icon={swCornerIcon}
+              eventHandlers={{
+                drag: (e) => handleCornerDrag('SW', e),
+              }}
+            />
+            {/* SE Corner */}
+            <Marker
+              position={seRot}
+              draggable={true}
+              icon={seCornerIcon}
+              eventHandlers={{
+                drag: (e) => handleCornerDrag('SE', e),
+              }}
+            />
+          </>
+        )}
 
         {/* Map Scale Control (distance scale bar - metric only) */}
         <ScaleControl position="bottomright" metric={true} imperial={false} />

@@ -5,7 +5,7 @@
 // =============================================================================
 
 import React, { useState } from 'react';
-import { Survey } from '../../types';
+import { Survey, CustomWorkItem } from '../../types';
 import {
   X,
   FileText,
@@ -15,7 +15,10 @@ import {
   Table,
   Edit3,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Plus,
+  Trash2,
+  Wrench
 } from 'lucide-react';
 import { exportToKML, exportToCSV, exportToPDF } from '../../utils/exportUtils';
 import { generateBASurveyPdf, BASurveyData } from '../../utils/baSurveyPdf';
@@ -26,6 +29,7 @@ interface SurveySummaryModalProps {
   survey: Survey | null;
   onClose: () => void;
   onEditSurvey?: (survey: Survey) => void;
+  onUpdateSurvey?: (survey: Survey) => Promise<void> | void;
   mapElement?: HTMLElement | null;
   onOpenExportPdfGambar?: () => void;
 }
@@ -35,17 +39,87 @@ export const SurveySummaryModal: React.FC<SurveySummaryModalProps> = ({
   survey,
   onClose,
   onEditSurvey,
+  onUpdateSurvey,
   mapElement,
   onOpenExportPdfGambar,
 }) => {
   const [exportLoading, setExportLoading] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
+  // Custom Work Items state
+  const [showAddWorkItem, setShowAddWorkItem] = useState(false);
+  const [workUraian, setWorkUraian] = useState('');
+  const [workVolume, setWorkVolume] = useState<number | string>(1);
+  const [workSatuan, setWorkSatuan] = useState('Meter');
+  const [workKeterangan, setWorkKeterangan] = useState('');
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+
   if (!visible || !survey) return null;
 
   const showNotify = (msg: string, type: 'success' | 'error' = 'success') => {
     setNotification({ msg, type });
     setTimeout(() => setNotification(null), 3500);
+  };
+
+  const handleStartEditItem = (item: CustomWorkItem) => {
+    setEditingItemId(item.id);
+    setWorkUraian(item.uraian);
+    setWorkVolume(item.volume);
+    setWorkSatuan(item.satuan);
+    setWorkKeterangan(item.keterangan || '');
+    setShowAddWorkItem(true);
+  };
+
+  const handleCancelWorkItem = () => {
+    setEditingItemId(null);
+    setWorkUraian('');
+    setWorkVolume(1);
+    setWorkSatuan('Meter');
+    setWorkKeterangan('');
+    setShowAddWorkItem(false);
+  };
+
+  const handleSaveWorkItem = () => {
+    if (!workUraian.trim()) {
+      showNotify('Uraian pekerjaan wajib diisi', 'error');
+      return;
+    }
+    const currentItems = survey.customWorkItems || [];
+    let updated: CustomWorkItem[];
+
+    if (editingItemId) {
+      updated = currentItems.map(item => item.id === editingItemId ? {
+        ...item,
+        uraian: workUraian.trim(),
+        volume: Number(workVolume) || 1,
+        satuan: workSatuan.trim() || 'Lot',
+        keterangan: workKeterangan.trim() || undefined,
+      } : item);
+    } else {
+      const newItem: CustomWorkItem = {
+        id: crypto.randomUUID(),
+        uraian: workUraian.trim(),
+        volume: Number(workVolume) || 1,
+        satuan: workSatuan.trim() || 'Lot',
+        keterangan: workKeterangan.trim() || undefined,
+      };
+      updated = [...currentItems, newItem];
+    }
+
+    if (onUpdateSurvey) {
+      onUpdateSurvey({ ...survey, customWorkItems: updated });
+    }
+    showNotify(editingItemId ? 'Pekerjaan berhasil diperbarui' : 'Pekerjaan baru ditambahkan');
+    handleCancelWorkItem();
+  };
+
+  const handleDeleteWorkItem = (id: string) => {
+    const currentItems = survey.customWorkItems || [];
+    const updated = currentItems.filter(item => item.id !== id);
+    if (onUpdateSurvey) {
+      onUpdateSurvey({ ...survey, customWorkItems: updated });
+    }
+    showNotify('Pekerjaan berhasil dihapus');
   };
 
   // Calculations
@@ -346,6 +420,241 @@ export const SurveySummaryModal: React.FC<SurveySummaryModalProps> = ({
                 <div style={{ fontSize: '11px', color: '#64748b' }}>Tidak ada data jalur</div>
               )}
             </div>
+          </div>
+
+          {/* Pekerjaan Tambahan / Non-Paket (Custom Work Items) */}
+          <div style={{ background: '#1e293b', padding: '14px', borderRadius: '8px', border: '1px solid #3b82f6' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Wrench size={16} color="#60a5fa" />
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#93c5fa' }}>
+                  Pekerjaan Tambahan / Non-Paket
+                </span>
+                <span style={{ fontSize: '10.5px', background: '#1e3a8a', color: '#bfdbfe', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                  {(survey.customWorkItems || []).length} Item
+                </span>
+              </div>
+              {!showAddWorkItem && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleCancelWorkItem();
+                    setShowAddWorkItem(true);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    background: '#2563eb',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '5px 10px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Plus size={13} />
+                  Tambah Pekerjaan
+                </button>
+              )}
+            </div>
+
+            {/* List of Custom Work Items */}
+            {(survey.customWorkItems && survey.customWorkItems.length > 0) ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: showAddWorkItem ? '12px' : '0' }}>
+                {survey.customWorkItems.map((item, index) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      background: '#0f172a',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid #334155',
+                      fontSize: '12px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                      <span style={{ color: '#64748b', fontWeight: 700, fontSize: '11px' }}>{index + 1}.</span>
+                      <div style={{ overflow: 'hidden' }}>
+                        <div style={{ color: '#f8fafc', fontWeight: 600, textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {item.uraian}
+                        </div>
+                        {item.keterangan && (
+                          <div style={{ fontSize: '10.5px', color: '#94a3b8' }}>
+                            {item.keterangan}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, marginLeft: '12px' }}>
+                      <span style={{ color: '#38bdf8', fontWeight: 700, background: 'rgba(2, 132, 199, 0.2)', padding: '2px 8px', borderRadius: '4px' }}>
+                        {item.volume} {item.satuan}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleStartEditItem(item)}
+                        title="Edit Item"
+                        style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '2px' }}
+                      >
+                        <Edit3 size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteWorkItem(item.id)}
+                        title="Hapus Item"
+                        style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              !showAddWorkItem && (
+                <div style={{ fontSize: '11px', color: '#64748b', fontStyle: 'italic', padding: '4px 0' }}>
+                  Belum ada rincian pekerjaan non-paket. Klik tombol <b>+ Tambah Pekerjaan</b> untuk menambahkan pekerjaan manual (misal: pasang kabel naik NYY, bongkar tiang, atau andongan).
+                </div>
+              )
+            )}
+
+            {/* Inline Add / Edit Form */}
+            {showAddWorkItem && (
+              <div style={{ background: '#0f172a', border: '1px solid #2563eb', borderRadius: '8px', padding: '12px', marginTop: '8px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#60a5fa', marginBottom: '8px' }}>
+                  {editingItemId ? '✏️ Edit Rincian Pekerjaan' : '➕ Tambah Pekerjaan Non-Paket Baru'}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '10.5px', color: '#94a3b8', marginBottom: '3px' }}>Uraian Pekerjaan *</label>
+                    <input
+                      type="text"
+                      placeholder="Contoh: Pasang kabel naik NYY 4x70 mm² 1 jurusan"
+                      value={workUraian}
+                      onChange={(e) => setWorkUraian(e.target.value)}
+                      style={{
+                        width: '100%',
+                        background: '#1e293b',
+                        border: '1px solid #475569',
+                        borderRadius: '6px',
+                        padding: '6px 8px',
+                        color: 'white',
+                        fontSize: '11.5px',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '10.5px', color: '#94a3b8', marginBottom: '3px' }}>Volume *</label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={workVolume}
+                      onChange={(e) => setWorkVolume(e.target.value)}
+                      style={{
+                        width: '100%',
+                        background: '#1e293b',
+                        border: '1px solid #475569',
+                        borderRadius: '6px',
+                        padding: '6px 8px',
+                        color: 'white',
+                        fontSize: '11.5px',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '10.5px', color: '#94a3b8', marginBottom: '3px' }}>Satuan</label>
+                    <input
+                      type="text"
+                      list="satuan-options"
+                      placeholder="Meter / Lot"
+                      value={workSatuan}
+                      onChange={(e) => setWorkSatuan(e.target.value)}
+                      style={{
+                        width: '100%',
+                        background: '#1e293b',
+                        border: '1px solid #475569',
+                        borderRadius: '6px',
+                        padding: '6px 8px',
+                        color: 'white',
+                        fontSize: '11.5px',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                    <datalist id="satuan-options">
+                      <option value="Meter" />
+                      <option value="Lot" />
+                      <option value="Titik" />
+                      <option value="Set" />
+                      <option value="Jurusan" />
+                      <option value="Batang" />
+                      <option value="Unit" />
+                    </datalist>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: '10px' }}>
+                  <label style={{ display: 'block', fontSize: '10.5px', color: '#94a3b8', marginBottom: '3px' }}>Keterangan / Lokasi (Opsional)</label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: Di panel PHB-TR Gardu Cantol Eksisting"
+                    value={workKeterangan}
+                    onChange={(e) => setWorkKeterangan(e.target.value)}
+                    style={{
+                      width: '100%',
+                      background: '#1e293b',
+                      border: '1px solid #475569',
+                      borderRadius: '6px',
+                      padding: '6px 8px',
+                      color: 'white',
+                      fontSize: '11.5px',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={handleCancelWorkItem}
+                    style={{
+                      background: '#334155',
+                      color: '#cbd5e1',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '5px 12px',
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveWorkItem}
+                    style={{
+                      background: '#10b981',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '5px 14px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {editingItemId ? 'Simpan Perubahan' : 'Tambahkan'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Rincian Pekerjaan Standar PLN */}
